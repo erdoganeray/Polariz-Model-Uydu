@@ -120,40 +120,49 @@ void loop() {
       if (length >= sizeof(TelemetryPacket)) {
         TelemetryPacket* telemetry = (TelemetryPacket*)data;
         
-        // Tüm telemetry verilerini detaylı şekilde göster
-        Serial.println("=== LORA1'DEN BINARY TELEMETRY ALINDI ===");
-        Serial.print("Paket#: "); Serial.println(telemetry->paket_sayisi);
-        Serial.print("Uydu Status: "); Serial.println(telemetry->uydu_statusu);
-        Serial.print("Hata Kodu: 0b"); Serial.println(telemetry->hata_kodu, BIN);
-        Serial.print("Gonderme Saati: "); Serial.println(telemetry->gonderme_saati);
-        
-        Serial.print("Basinc1: "); Serial.print(telemetry->basinc1); Serial.println(" Pa");
-        Serial.print("Basinc2: "); Serial.print(telemetry->basinc2); Serial.println(" Pa");
-        Serial.print("Yukseklik1: "); Serial.print(telemetry->yukseklik1); Serial.println(" m");
-        Serial.print("Yukseklik2: "); Serial.print(telemetry->yukseklik2); Serial.println(" m");
-        Serial.print("Irtifa Farki: "); Serial.print(telemetry->irtifa_farki); Serial.println(" m");
-        Serial.print("Inis Hizi: "); Serial.print(telemetry->inis_hizi); Serial.println(" m/s");
-        
-        Serial.print("Sicaklik: "); Serial.print(telemetry->sicaklik / 10.0); Serial.println("°C");
-        Serial.print("Pil Gerilimi: "); Serial.print(telemetry->pil_gerilimi / 100.0); Serial.println("V");
-        
-        Serial.print("GPS Latitude: "); Serial.println(telemetry->gps1_latitude, 6);
-        Serial.print("GPS Longitude: "); Serial.println(telemetry->gps1_longitude, 6);
-        Serial.print("GPS Altitude: "); Serial.print(telemetry->gps1_altitude); Serial.println(" m");
-        
-        Serial.print("Pitch: "); Serial.print(telemetry->pitch / 10.0); Serial.println("°");
-        Serial.print("Roll: "); Serial.print(telemetry->roll / 10.0); Serial.println("°");
-        Serial.print("Yaw: "); Serial.print(telemetry->yaw / 10.0); Serial.println("°");
-        
         // RHRH decode et
         char rhrh_str[5];
         decodeRHRH(telemetry->rhrh, rhrh_str);
-        Serial.print("RHRH: "); Serial.println(rhrh_str);
         
-        Serial.print("IoT Sensor 1: "); Serial.print(telemetry->iot_s1_data / 10.0); Serial.println("°C");
-        Serial.print("IoT Sensor 2: "); Serial.print(telemetry->iot_s2_data / 10.0); Serial.println("°C");
-        Serial.print("Takim No: "); Serial.println(telemetry->takim_no);
-        Serial.println("==========================================");
+        // Tarih formatını datetime string'e çevir
+        unsigned long timestamp = telemetry->gonderme_saati;
+        int day = (timestamp / 86400) % 30 + 1;  // Basit gün hesabı
+        int month = ((timestamp / 86400) / 30) % 12 + 1;  // Basit ay hesabı
+        int year = 2025;  // Sabit yıl
+        int hour = (timestamp % 86400) / 3600;
+        int minute = (timestamp % 3600) / 60;
+        int second = timestamp % 60;
+        
+        // Hata kodunu binary string'e çevir
+        String hata_kodu_str = "";
+        for(int i = 4; i >= 0; i--) {
+          hata_kodu_str += ((telemetry->hata_kodu >> i) & 1) ? "1" : "0";
+        }
+        
+        // Virgülle ayrılmış format
+        Serial.print(telemetry->paket_sayisi); Serial.print(",");
+        Serial.print(telemetry->uydu_statusu); Serial.print(",");
+        Serial.print(hata_kodu_str); Serial.print(",");
+        Serial.printf("%02d.%02d.%d-%02d:%02d:%02d,", day, month, year, hour, minute, second);
+        Serial.print(telemetry->basinc1, 1); Serial.print(",");
+        Serial.print(telemetry->basinc2, 1); Serial.print(",");
+        Serial.print(telemetry->yukseklik1, 1); Serial.print(",");
+        Serial.print(telemetry->yukseklik2, 1); Serial.print(",");
+        Serial.print(telemetry->irtifa_farki, 1); Serial.print(",");
+        Serial.print(telemetry->inis_hizi, 1); Serial.print(",");
+        Serial.print(telemetry->sicaklik / 10.0, 1); Serial.print(",");
+        Serial.print(telemetry->pil_gerilimi / 100.0, 2); Serial.print(",");
+        Serial.print(telemetry->gps1_latitude, 6); Serial.print(",");
+        Serial.print(telemetry->gps1_longitude, 6); Serial.print(",");
+        Serial.print(telemetry->gps1_altitude, 1); Serial.print(",");
+        Serial.print(telemetry->pitch / 10.0, 1); Serial.print(",");
+        Serial.print(telemetry->roll / 10.0, 1); Serial.print(",");
+        Serial.print(telemetry->yaw / 10.0, 1); Serial.print(",");
+        Serial.print(rhrh_str); Serial.print(",");
+        Serial.print(telemetry->iot_s1_data / 10.0, 1); Serial.print(",");
+        Serial.print(telemetry->iot_s2_data / 10.0, 1); Serial.print(",");
+        Serial.println(telemetry->takim_no);
+        
         Serial.println("'SEND' yazarak button control gonderebilirsiniz.");
         
       } else {
