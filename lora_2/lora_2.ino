@@ -163,8 +163,6 @@ void loop() {
         Serial.print(telemetry->iot_s2_data / 10.0, 1); Serial.print(",");
         Serial.println(telemetry->takim_no);
         
-        Serial.println("'SEND' yazarak button control gonderebilirsiniz.");
-        
       } else {
         Serial.println("Hatali telemetry paketi boyutu!");
       }

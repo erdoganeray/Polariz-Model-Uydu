@@ -12,11 +12,12 @@ import random
 import math
 from datetime import datetime
 from typing import Dict, List, Tuple
+import threading
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QGridLayout, QLabel, QPushButton, QComboBox, QTextEdit, QFrame,
-    QSizePolicy, QGroupBox, QTableWidget, QTableWidgetItem
+    QSizePolicy, QGroupBox, QTableWidget, QTableWidgetItem, QMessageBox
 )
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QPixmap, QPalette, QColor
@@ -25,6 +26,8 @@ from OpenGL.GL import *
 from OpenGL.GLU import *
 import pyqtgraph as pg
 import numpy as np
+import serial
+import serial.tools.list_ports
 
 
 class SatelliteModel3D(QOpenGLWidget):
@@ -292,8 +295,15 @@ class GroundStationGUI(QMainWindow):
         super().__init__()
         self.telemetry_data = TelemetryData()
         self.start_time = time.time()  # Başlangıç zamanını kaydet
+        
+        # Serial communication variables
+        self.serial_connection = None
+        self.is_listening = False
+        self.listen_thread = None
+        
         self.init_ui()
         self.setup_timers()
+        self.refresh_com_ports()
         
     def init_ui(self):
         """UI kurulumu"""
@@ -558,8 +568,91 @@ class GroundStationGUI(QMainWindow):
         section_layout = QHBoxLayout(section_widget)
         
         # COM Kontrol paneli
-        com_group = QGroupBox("Sistem Kontrolü")
+        com_group = QGroupBox("Haberleşme Kontrolü")
         com_layout = QVBoxLayout(com_group)
+        
+        # COM Port Selection Frame
+        com_frame = QWidget()
+        com_frame_layout = QGridLayout(com_frame)
+        
+        # COM Port
+        com_label = QLabel("COM Port:")
+        self.com_combo = QComboBox()
+        self.com_combo.setMinimumWidth(120)
+        
+        # Refresh button
+        self.refresh_btn = QPushButton("Yenile")
+        self.refresh_btn.setMaximumWidth(80)
+        self.refresh_btn.clicked.connect(self.refresh_com_ports)
+        
+        # Baud Rate
+        baud_label = QLabel("Baud Rate:")
+        self.baud_combo = QComboBox()
+        self.baud_combo.addItems(['9600', '115200', '230400'])
+        self.baud_combo.setCurrentText('115200')
+        self.baud_combo.setMaximumWidth(100)
+        
+        # Control Buttons
+        self.start_btn = QPushButton("Başlat")
+        self.start_btn.clicked.connect(self.start_listening)
+        self.start_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #198754;
+                color: white;
+                font-weight: bold;
+                padding: 8px 16px;
+                border-radius: 6px;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #157347;
+            }
+            QPushButton:pressed {
+                background-color: #146c43;
+            }
+        """)
+        
+        self.stop_btn = QPushButton("Durdur")
+        self.stop_btn.clicked.connect(self.stop_listening)
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dc3545;
+                color: white;
+                font-weight: bold;
+                padding: 8px 16px;
+                border-radius: 6px;
+                border: none;
+            }
+            QPushButton:hover:enabled {
+                background-color: #c82333;
+            }
+            QPushButton:pressed:enabled {
+                background-color: #bd2130;
+            }
+            QPushButton:disabled {
+                background-color: #6c757d;
+            }
+        """)
+        
+
+        
+        # Layout arrangement
+        com_frame_layout.addWidget(com_label, 0, 0)
+        com_frame_layout.addWidget(self.com_combo, 0, 1)
+        com_frame_layout.addWidget(self.refresh_btn, 0, 2)
+        
+        com_frame_layout.addWidget(baud_label, 1, 0)
+        com_frame_layout.addWidget(self.baud_combo, 1, 1)
+        
+        control_frame = QWidget()
+        control_layout = QHBoxLayout(control_frame)
+        control_layout.addWidget(self.start_btn)
+        control_layout.addWidget(self.stop_btn)
+        
+        # Connection status
+        self.connection_status = QLabel("Durum: Bağlantı bekleniyor")
+        self.connection_status.setStyleSheet("font-weight: 500; color: #6c757d; font-size: 12px;")
         
         # Manuel ayrılma butonu
         self.manual_separation_btn = QPushButton("Manuel Ayrılma")
@@ -582,14 +675,10 @@ class GroundStationGUI(QMainWindow):
         """)
         self.manual_separation_btn.clicked.connect(self.manual_separation)
         
-        # COM port seçimi
-        com_label = QLabel("COM Port Seçimi:")
-        self.com_combo = QComboBox()
-        self.com_combo.addItems(["COM1", "COM3", "COM5", "COM7"])  # Örnek COM portları
-        
+        com_layout.addWidget(com_frame)
+        com_layout.addWidget(control_frame)
+        com_layout.addWidget(self.connection_status)
         com_layout.addWidget(self.manual_separation_btn)
-        com_layout.addWidget(com_label)
-        com_layout.addWidget(self.com_combo)
         
         # Logo bölümü
         logo_group = QGroupBox("YIS Logo")
@@ -636,41 +725,9 @@ class GroundStationGUI(QMainWindow):
         self.model_timer.start(100)
         
     def update_data(self):
-        """Verileri güncelleme"""
-        self.telemetry_data.simulate_update()
-        
-        # Grafikleri güncelle
-        current_time = time.time() - self.start_time  # Başlangıçtan itibaren geçen saniye
-        
-        # Basınç grafiği
-        self.update_graph('pressure', current_time, self.telemetry_data.basinc1)
-        
-        # Yükseklik grafiği
-        self.update_graph('altitude', current_time, self.telemetry_data.yukseklik1)
-        
-        # İniş hızı grafiği
-        self.update_graph('descent_speed', current_time, self.telemetry_data.inis_hizi)
-        
-        # Sıcaklık grafiği
-        self.update_graph('temperature', current_time, self.telemetry_data.sicaklik)
-        
-        # İrtifa farkı grafiği
-        self.update_graph('altitude_diff', current_time, self.telemetry_data.irtifa_farki)
-        
-        # IoT sıcaklık grafiği (ortalama)
-        avg_iot_temp = (self.telemetry_data.iot_s1_data + self.telemetry_data.iot_s2_data) / 2
-        self.update_graph('iot_temp', current_time, avg_iot_temp)
-        
-        # Durum metinlerini güncelle
-        battery_percent = int((self.telemetry_data.pil_gerilimi - 3.0) / 1.0 * 100)
-        self.status_label1.setText(f"Pil Gerilimi: {self.telemetry_data.pil_gerilimi:.1f}V ({battery_percent}%)")
-        self.status_label2.setText(f"Statü: {self.telemetry_data.uydu_statusu} (Uçuşa Hazır)")
-        
-        # Hata kodunu güncelle
-        self.update_error_display()
-        
-        # Log mesajı ekle
-        self.add_log_message(f"Paket #{self.telemetry_data.paket_sayisi} alındı - Alt: {self.telemetry_data.yukseklik1:.1f}m")
+        """Verileri güncelleme - sadece simülasyon için değil gerçek veri gelirse durdur"""
+        # Simülasyon kaldırıldı - sadece gerçek COM verisiyle çalışacak
+        pass
         
     def update_graph(self, graph_id, x_value, y_value):
         """Grafik güncelleme"""
@@ -710,9 +767,211 @@ class GroundStationGUI(QMainWindow):
         rhrh_code = ''.join([combo.currentText() for combo in self.rhrh_combos])
         self.add_log_message(f"Telekomut gönderildi: RHRH={rhrh_code}")
         
+        # Serial bağlantı varsa SEND komutunu gönder
+        if self.is_listening and self.serial_connection:
+            try:
+                self.serial_connection.write(b'SEND\n')
+                self.add_log_message("SEND komutu LoRa'ya gönderildi (RHRH tetikleyicisi)")
+            except serial.SerialException as e:
+                self.add_log_message(f"SEND komutu gönderme hatası: {str(e)}")
+        else:
+            self.add_log_message("UYARI: COM bağlantısı yok, komut gönderilemedi!")
+        
     def manual_separation(self):
         """Manuel ayrılma komutu"""
         self.add_log_message("UYARI: Manuel ayrılma komutu gönderildi!")
+        
+        # Serial bağlantı varsa SEND komutunu gönder
+        if self.is_listening and self.serial_connection:
+            try:
+                self.serial_connection.write(b'SEND\n')
+                self.add_log_message("SEND komutu LoRa'ya gönderildi (Manuel ayrılma tetikleyicisi)")
+            except serial.SerialException as e:
+                self.add_log_message(f"SEND komutu gönderme hatası: {str(e)}")
+        else:
+            self.add_log_message("UYARI: COM bağlantısı yok, komut gönderilemedi!")
+        
+    def refresh_com_ports(self):
+        """Available COM ports listesini yenile"""
+        ports = serial.tools.list_ports.comports()
+        port_list = [f"{port.device} - {port.description}" for port in ports]
+        
+        self.com_combo.clear()
+        self.com_combo.addItems(port_list)
+        if port_list:
+            self.com_combo.setCurrentIndex(0)
+            
+    def start_listening(self):
+        """COM port dinlemeyi başlat"""
+        if self.com_combo.count() == 0:
+            QMessageBox.critical(self, "Hata", "Lütfen bir COM port seçin!")
+            return
+            
+        com_port = self.com_combo.currentText().split(" - ")[0]
+        baud_rate = int(self.baud_combo.currentText())
+        
+        try:
+            self.serial_connection = serial.Serial(
+                port=com_port,
+                baudrate=baud_rate,
+                timeout=1
+            )
+            
+            self.is_listening = True
+            self.listen_thread = threading.Thread(target=self.listen_to_serial, daemon=True)
+            self.listen_thread.start()
+            
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(True)
+            self.com_combo.setEnabled(False)
+            self.baud_combo.setEnabled(False)
+            self.refresh_btn.setEnabled(False)
+            
+            self.connection_status.setText(f"Durum: {com_port} dinleniyor...")
+            self.connection_status.setStyleSheet("font-weight: 500; color: #198754; font-size: 12px;")
+            self.add_log_message(f"COM port bağlantısı başarılı: {com_port} @ {baud_rate} baud")
+            
+        except serial.SerialException as e:
+            QMessageBox.critical(self, "Bağlantı Hatası", f"COM port açılamadı: {str(e)}")
+            self.add_log_message(f"COM port bağlantı hatası: {str(e)}")
+            
+    def stop_listening(self):
+        """COM port dinlemeyi durdur"""
+        self.is_listening = False
+        
+        if self.serial_connection and self.serial_connection.is_open:
+            self.serial_connection.close()
+            
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.com_combo.setEnabled(True)
+        self.baud_combo.setEnabled(True)
+        self.refresh_btn.setEnabled(True)
+        
+        self.connection_status.setText("Durum: Bağlantı durduruldu")
+        self.connection_status.setStyleSheet("font-weight: 500; color: #6c757d; font-size: 12px;")
+        self.add_log_message("COM port bağlantısı kapatıldı")
+        
+    def listen_to_serial(self):
+        """Serial port'u dinle ve gelen verileri logla"""
+        self.add_log_message("LoRa ESP32 dinleme başladı...")
+        
+        while self.is_listening and self.serial_connection and self.serial_connection.is_open:
+            try:
+                if self.serial_connection.in_waiting > 0:
+                    # Read line from serial
+                    data = self.serial_connection.readline().decode('utf-8', errors='ignore').strip()
+                    
+                    if data:
+                        # Telemetri verisi kontrolü ve parse işlemi
+                        if self.parse_telemetry_data(data):
+                            self.add_log_message(f"Telemetri: {data}")
+                        elif any(keyword in data for keyword in ["BTN,", "REQ,", "PRS,", "L4DATA,", "L5DATA,"]):
+                            self.add_log_message(f"LoRa Verisi: {data}")
+                        elif "binary" in data.lower() and ("gonderildi" in data.lower() or "alindi" in data.lower()):
+                            self.add_log_message(f"LoRa İletişim: {data}")
+                        else:
+                            # Diğer serial mesajları
+                            if len(data.strip()) > 0:
+                                self.add_log_message(f"Serial: {data}")
+                            
+                time.sleep(0.01)  # Small delay to prevent excessive CPU usage
+                
+            except serial.SerialException as e:
+                self.add_log_message(f"Serial okuma hatası: {str(e)}")
+                break
+            except Exception as e:
+                self.add_log_message(f"Beklenmeyen hata: {str(e)}")
+                break
+                
+        self.add_log_message("Serial dinleme durduruldu")
+    
+    def parse_telemetry_data(self, data_string):
+        """Parse telemetry data and update graphs"""
+        try:
+            # Remove TEL, prefix if exists, or work with raw data
+            if data_string.startswith("TEL,"):
+                data_string = data_string[4:]  # Remove "TEL," prefix
+            
+            # Expected format after TEL,: "paket_sayisi,uydu_statusu,hata_kodu,gonderme_saati,basinc1,basinc2,yukseklik1,yukseklik2,irtifa_farki,inis_hizi,sicaklik,pil_gerilimi,gps1_latitude,gps1_longitud,gps1_altitude,pitch,roll,yaw,rhrh,iot_s1_data,iot_s2_data,takim_no"
+            parts = data_string.split(',')
+            
+            if len(parts) >= 22:  # 22 because we removed TEL, prefix
+                try:
+                    # Parse the telemetry values (indexes shifted by -1 since TEL, is removed)
+                    paket_sayisi = int(parts[0])
+                    basinc1 = float(parts[4])
+                    basinc2 = float(parts[5])
+                    yukseklik1 = float(parts[6])
+                    yukseklik2 = float(parts[7])
+                    irtifa_farki = float(parts[8])
+                    inis_hizi = float(parts[9])
+                    sicaklik = float(parts[10])
+                    pil_gerilimi = float(parts[11])
+                    pitch = float(parts[15])
+                    roll = float(parts[16])
+                    yaw = float(parts[17])
+                    iot_s1_data = float(parts[19])
+                    iot_s2_data = float(parts[20])
+                    
+                    # Update telemetry data
+                    self.telemetry_data.paket_sayisi = paket_sayisi
+                    self.telemetry_data.basinc1 = basinc1
+                    self.telemetry_data.basinc2 = basinc2
+                    self.telemetry_data.yukseklik1 = yukseklik1
+                    self.telemetry_data.yukseklik2 = yukseklik2
+                    self.telemetry_data.irtifa_farki = irtifa_farki
+                    self.telemetry_data.inis_hizi = inis_hizi
+                    self.telemetry_data.sicaklik = sicaklik
+                    self.telemetry_data.pil_gerilimi = pil_gerilimi
+                    self.telemetry_data.pitch = pitch
+                    self.telemetry_data.roll = roll
+                    self.telemetry_data.yaw = yaw
+                    self.telemetry_data.iot_s1_data = iot_s1_data
+                    self.telemetry_data.iot_s2_data = iot_s2_data
+                    
+                    # Add timestamp (relative to start time)
+                    current_time = time.time() - self.start_time
+                    
+                    # Update graphs with real data
+                    self.update_graph('pressure', current_time, basinc1)
+                    self.update_graph('altitude', current_time, yukseklik1)
+                    self.update_graph('descent_speed', current_time, inis_hizi)
+                    self.update_graph('temperature', current_time, sicaklik)
+                    self.update_graph('altitude_diff', current_time, irtifa_farki)
+                    avg_iot_temp = (iot_s1_data + iot_s2_data) / 2
+                    self.update_graph('iot_temp', current_time, avg_iot_temp)
+                    
+                    # Update status displays
+                    battery_percent = int((pil_gerilimi - 3.0) / 1.0 * 100)
+                    self.status_label1.setText(f"Pil Gerilimi: {pil_gerilimi:.1f}V ({battery_percent}%)")
+                    
+                    return True
+                except ValueError as ve:
+                    return False
+            else:
+                # Check if this looks like telemetry data (starts with a number)
+                if data_string and data_string[0].isdigit() and ',' in data_string:
+                    # This might be telemetry data without TEL, prefix
+                    return self.parse_telemetry_data(data_string)
+                return False
+        except Exception as e:
+            return False
+        return False
+        
+    def manual_separation(self):
+        """Manuel ayrılma komutu"""
+        self.add_log_message("UYARI: Manuel ayrılma komutu gönderildi!")
+        
+        # Serial bağlantı varsa SEND komutunu gönder
+        if self.is_listening and self.serial_connection:
+            try:
+                self.serial_connection.write(b'SEND\n')
+                self.add_log_message("SEND komutu LoRa'ya gönderildi (Manuel ayrılma tetikleyicisi)")
+            except serial.SerialException as e:
+                self.add_log_message(f"SEND komutu gönderme hatası: {str(e)}")
+        else:
+            self.add_log_message("UYARI: COM bağlantısı yok, komut gönderilemedi!")
         
     def add_log_message(self, message):
         """Log mesajı ekleme"""
@@ -723,6 +982,12 @@ class GroundStationGUI(QMainWindow):
         # Log'u otomatik kaydır
         scrollbar = self.log_text.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
+        
+    def closeEvent(self, event):
+        """Uygulama kapatılırken çağrılan fonksiyon"""
+        if self.is_listening:
+            self.stop_listening()
+        event.accept()
 
 
 def main():
