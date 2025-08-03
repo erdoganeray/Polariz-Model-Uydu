@@ -107,25 +107,6 @@ void sendTelemetryToLora2() {
   paket_sayisi_lora2++;
 }
 
-void sendRequestToLora3() {
-  // Binary request paketi oluştur
-  RequestPacket request;
-  
-  request.packet_type = PACKET_TYPE_REQUEST;
-  request.paket_sayisi = paket_sayisi_lora3;
-  
-  ResponseStatus rs = E22.sendFixedMessage(0x00, 0x0A, 30, (uint8_t*)&request, sizeof(request));
-  
-  Serial.print("Lora3'e binary request gonderildi (");
-  Serial.print(sizeof(request));
-  Serial.print(" bytes), Paket#: ");
-  Serial.println(paket_sayisi_lora3);
-  Serial.print("Durum: ");
-  Serial.println(rs.getResponseDescription());
-  
-  paket_sayisi_lora3++;
-}
-
 bool waitForMessage(unsigned long timeout_ms) {
   unsigned long start_time = millis();
   while (millis() - start_time < timeout_ms) {
