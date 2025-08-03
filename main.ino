@@ -531,4 +531,154 @@ void updateSensorStatus() {
     
     // SD kart kontrolü
     if (!sd_status) {
-      Serial.println("SD kart yeniden bağlanmaya çalışılıyor..."
+      Serial.println("SD kart yeniden bağlanmaya çalışılıyor...");
+      
+      // Basit SD kart yeniden başlatma
+      if (SD.begin()) {
+        sd_status = true;
+        Serial.println("SD kart yeniden bağlandı");
+        
+        // CSV dosyası varsa kontrol et, yoksa oluştur
+        if (!SD.exists("/sensor_data.csv")) {
+          writeFile(SD, "/sensor_data.csv", "Packet_Number,Timestamp,Pitch,Roll,Yaw,Pressure,Temperature,Yukseklik1,Latitude,Longitude,Altitude,GPS_Valid,pil_gerilimi,Sensor_Status\n");
+        }
+      } else {
+        Serial.println("SD kart yeniden bağlanma başarısız");
+      }
+    }
+  }
+}
+
+void writeFile(fs::FS &fs, const char *path, const char *message) {
+  Serial.printf("SD'ye yazılıyor: %s\n", path);
+  File file = fs.open(path, FILE_WRITE);
+  if (!file) {
+    Serial.println("SD dosya yazma hatası - dosya açılamadı");
+    sd_status = false;
+    return;
+  }
+  if (file.print(message)) {
+    Serial.println("SD dosya başarıyla yazıldı");
+  } else {
+    Serial.println("SD yazma başarısız - yazma hatası");
+    sd_status = false;
+  }
+  file.close();
+}
+
+bool appendFile(fs::FS &fs, const char *path, const char *message) {
+  File file = fs.open(path, FILE_APPEND);
+  if (!file) {
+    Serial.println("SD dosya ekleme hatası - dosya açılamadı");
+    return false;
+  }
+  
+  size_t bytesWritten = file.print(message);
+  if (bytesWritten > 0) {
+    file.close();
+    return true;
+  } else {
+    Serial.println("SD ekleme başarısız - yazma hatası");
+    file.close();
+    return false;
+  }
+}
+
+void setRTCTime(String command) {
+  // Format: SET:2025,7,18,14,30,0 (Yıl,Ay,Gün,Saat,Dakika,Saniye)
+  command = command.substring(4); // "SET:" kısmını çıkar
+  
+  int values[6];
+  int index = 0;
+  
+  // String'i parçala
+  while (command.length() > 0 && index < 6) {
+    int commaIndex = command.indexOf(',');
+    if (commaIndex == -1) {
+      values[index] = command.toInt();
+      break;
+    }
+    values[index] = command.substring(0, commaIndex).toInt();
+    command = command.substring(commaIndex + 1);
+    index++;
+  }
+  
+  if (index == 5) { // 6 değer alındıysa
+    rtc.adjust(DateTime(values[0], values[1], values[2], values[3], values[4], values[5]));
+    Serial.printf("RTC zamanı ayarlandı: %02d/%02d/%04d %02d:%02d:%02d\n", 
+                  values[2], values[1], values[0], values[3], values[4], values[5]);
+    rtc_status = true;
+  } else {
+    Serial.println("Hatalı format! Kullanım: SET:2025,7,18,14,30,0");
+  }
+}
+
+void loadLastPacketNumber() {
+  Serial.println("Son paket numarası okunuyor...");
+  
+  File file = SD.open("/sensor_data.csv", FILE_READ);
+  if (!file) {
+    Serial.println("CSV dosyası açılamadı, paket numarası 1'den başlayacak");
+    packet_counter = 1;
+    return;
+  }
+  
+  String lastLine = "";
+  String currentLine = "";
+  
+  // Dosyayı okuyup son satırı bul
+  while (file.available()) {
+    char c = file.read();
+    if (c == '\n') {
+      if (currentLine.length() > 0) {
+        lastLine = currentLine;
+        currentLine = "";
+      }
+    } else {
+      currentLine += c;
+    }
+  }
+  
+  // Son satır da ekle (dosya \n ile bitmiyorsa)
+  if (currentLine.length() > 0) {
+    lastLine = currentLine;
+  }
+  
+  file.close();
+  
+  // Son satırdan paket numarasını çıkar
+  if (lastLine.length() > 0 && lastLine != "Packet_Number,Timestamp,Pitch,Roll,Yaw,Pressure,Temperature,Yukseklik1,Latitude,Longitude,Altitude,GPS_Valid,pil_gerilimi,Sensor_Status") {
+    int commaIndex = lastLine.indexOf(',');
+    if (commaIndex > 0) {
+      String packetNumStr = lastLine.substring(0, commaIndex);
+      unsigned long lastPacketNum = packetNumStr.toInt();
+      if (lastPacketNum > 0) {
+        packet_counter = lastPacketNum + 1;
+        Serial.printf("Son paket numarası: %lu, devam edecek: %lu\n", lastPacketNum, packet_counter);
+      } else {
+        packet_counter = 1;
+        Serial.println("Paket numarası okunamadı, 1'den başlayacak");
+      }
+    } else {
+      packet_counter = 1;
+      Serial.println("CSV formatı hatalı, paket numarası 1'den başlayacak");
+    }
+  } else {
+    packet_counter = 1;
+    Serial.println("CSV dosyası boş, paket numarası 1'den başlayacak");
+  }
+}
+
+
+float calculateAltitude(float P, float T_celsius) {
+  const float P0 = 101325.0;     // Deniz seviyesi basıncı (Pa)
+  const float L = 0.0065;        // Sıcaklık gradyanı (K/m)
+  const float R = 287.05;        // Gaz sabiti (J/kg·K)
+  const float g = 9.80665;       // Yerçekimi (m/s²)
+
+  float T = T_celsius + 273.15;  // Celsius -> Kelvin dönüşümü
+
+  // Barometrik formül:
+  float h = (T / L) * (1 - pow(P / P0, (R * L) / g));
+  return h;
+}
