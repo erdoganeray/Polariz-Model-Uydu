@@ -1,21 +1,24 @@
 /*
-* BERKAYIN YÜK KODU
+ * BERKAYIN KODU
+ * SON HALİ
  * ESP32 Sensör Veri Toplama Sistemi
  * 
  * Sensörler:
- * - MPU6050: I2C üzerinden pitch, roll, yaw (GPIO21-SDA, GPIO22-SCL)
+ * - MPU6050: I2C üzerin  //RHRH
+  uint32_t rhrh; // Hex veri (4 byte) /Daha sonra kullanılacak
+
+  float iot_s1_data;       // IoT sensor 1 verisi /Daha sonra kullanılacak
+  float iot_s2_data;       // IoT sensor 2 verisi /Daha sonra kullanılacak
+
+  //Takım numarası
+  uint32_t takim_no; // Takım numarası (626541)h, roll, yaw (GPIO21-SDA, GPIO22-SCL)
  * - BMP280: I2C üzerinden basınç ve sıcaklık (GPIO21-SDA, GPIO22-SCL)
  * - GY-GPS6MV2: UART1 üzerinden GPS verileri (GPIO16-RX, GPIO17-TX)
  * - DS3231 RTC: I2C üzerinden zaman bilgisi (GPIO21-SDA, GPIO22-SCL)
  * - SD Kart: SPI üzerinden veri kaydetme (GPIO18-SCK, GPIO19-MISO, GPIO23-MOSI, GPIO5-CS)
  * - ADC: Gerilim ölçümü
- * - SG90 Servo Motorlar: PWM ile pozisyon kontrolü (GPIO12, GPIO13)
  * 
- * Komut formatları USB Serial üzerinden:
- * - "GET_DATA" -> Manuel veri toplama
- * - "RHRH:m2k6" -> Servo pozisyon kontrol (m=65° 2sn, k=115° 6sn)
- * - "STATUS" -> Sistem durumu
- * - "SERVO_TEST" -> Servo test hareketi
+ * Komut formatı USB Serial üzerinden: "GET_DATA"
  */
 
 // Kütüphaneler
@@ -28,7 +31,6 @@
 #include <RTClib.h>
 #include <SD.h>
 #include <FS.h>
-// MG90S servo için PWM kullanacağız (ESP32Servo yerine)
 
 // GPS UART1 Pin tanımlamaları
 #define GPS_RX 16
@@ -45,41 +47,11 @@ HardwareSerial gpsSerial(1);
 // ADC pin tanımlaması
 #define pil_gerilimi_PIN A0
 
-// Servo motor pin tanımlamaları (MG90S için PWM pinleri)
-#define SERVO1_PIN 12
-#define SERVO2_PIN 13
-
-// MG90S servo PWM kanalları (pozisyon kontrolü için)
-#define SERVO1_CHANNEL 0
-#define SERVO2_CHANNEL 1
-#define SERVO_FREQ 50      // 50Hz PWM frekansı
-#define SERVO_RESOLUTION 16 // 16-bit çözünürlük
-
-// SG90 servo pozisyon kontrol değerleri (pulse width in microseconds)
-#define SERVO_0_DEG 500     // 0° pozisyon (m)
-#define SERVO_50_DEG 1250   // 50° pozisyon (b)
-#define SERVO_100_DEG 1750  // 100° pozisyon (k)
-#define SERVO_150_DEG 2250  // 150° pozisyon (y)
-
 // Sensör nesneleri
 Adafruit_MPU6050 mpu;
 Adafruit_BMP280 bmp;
 TinyGPSPlus gps;
 RTC_DS3231 rtc;
-
-// SG90 Servo motor PWM kontrol fonksiyonları (180° pozisyon kontrolü)
-void setServoPosition(int channel, int angle);
-int angleToDutyCycle(int angle);
-void moveServoToNeutral(int channel);
-
-// RHRH servo kontrol değişkenleri
-String current_rhrh = "b0b0"; // Default değer (b=50°)
-unsigned long servo1_start_time = 0;
-unsigned long servo2_start_time = 0;
-int servo1_duration = 0;
-int servo2_duration = 0;
-bool servo1_active = false;
-bool servo2_active = false;
 
 // Veri yapısı
 struct __attribute__((packed)) SensorData {
@@ -87,10 +59,10 @@ struct __attribute__((packed)) SensorData {
   uint16_t packet_number;
 
   // Uydu statüsü (İlerleyen zamanlarda kullanılacak)
-  char  uydu_statusu;      // 1-6 arası durum kodu
+  uint8_t  uydu_statusu;      // 1-6 arası durum kodu
 
   // Hata Kodu (İlerleyen zamanlarda kullanılacak)
-  char hata_kodu;          // 5 haneli hata kodu
+  uint8_t hata_kodu;          // 5 haneli hata kodu
   
   // RTC verileri
   String timestamp;  //Daha sonra değişecek.
@@ -104,7 +76,6 @@ struct __attribute__((packed)) SensorData {
   float yukseklik1;        // Birincil yükseklik (m).
   float yukseklik2;        // İkincil yükseklik (m). /Daha sonra kullanılacak
   float irtifa_farki;      // Yükseklik farkı (m). /Daha sonra kullanılacak
-  float inis_hizi;         // Model Uydunun yere iniş hızı.
 
   float temperature; //Görev yükündeki sıcaklık verisi
 
@@ -115,7 +86,7 @@ struct __attribute__((packed)) SensorData {
   double latitude;
   double longitude;
   float altitude;
-  //bool gps_valid; // GPS verilerinin geçerli olup olmadığını gösterir
+  bool gps_valid; // GPS verilerinin geçerli olup olmadığını gösterir
 
   // MPU6050 verileri
   float pitch;
@@ -123,15 +94,14 @@ struct __attribute__((packed)) SensorData {
   float yaw;
   
   //RHRH
-  String rhrh; // RHRH servo kontrol komutu (örn: m2k6)
+  uint32_t rhrh; // Hex veri (4 byte) /Daha sonra kullanılacak
 
   float iot_s1_data;       // IoT sensor 1 verisi /Daha sonra kullanılacak
   float iot_s2_data;       // IoT sensor 2 verisi /Daha sonra kullanılacak
 
   //Takım numarası
-  uint32_t takim_no; // Takım numarası (626541)
+  uint32_t takim_no; // Takım numarası (626541)
 
-  bool gps_valid;
   // Sensör durumları (BMP280, MPU6050, RTC, GPS, SD, ADC)
   String sensor_status; // Daha sonra silinecek.
 };
@@ -146,29 +116,6 @@ bool adc_status = false;
 
 // Paket numarası
 uint16_t packet_counter = 1;
-
-// İniş hızı hesaplama için değişkenler
-float previous_altitude = 0.0;
-unsigned long previous_time = 0;
-bool first_altitude_reading = true;
-
-String createDataPacket(SensorData data);
-void saveToSD(SensorData data);
-void updateSensorStatus();
-void writeFile(fs::FS &fs, const char *path, const char *message);
-bool appendFile(fs::FS &fs, const char *path, const char *message);
-void setRTCTime(String command);
-void loadLastPacketNumber();
-float calculateAltitude(float P, float T_celsius);
-void collectAndSendData();
-void initSDCard();
-void initSensors();
-void initServos();
-void processRHRHCommand(String command);
-int getServoPosition(char position);
-void updateServoControl();
-void processSerialCommands();
-
 
 void setup() {
   Serial.begin(115200);
@@ -186,26 +133,29 @@ void setup() {
   // Sensörleri başlatma
   initSensors();
   
-  // Servo motorları başlatma
-  initServos();
-  
   // SD kart başlatma
   initSDCard();
   
-  Serial.println("Sistem hazır! Otomatik veri gönderimi (1Hz)");
+  Serial.println("Sistem hazır! Otomatik veri gönderimi (1Hz) ve GET_DATA komutu aktif...");
 }
 
 void loop() {
+  // USB Serial üzerinden komut kontrolü
+  if (Serial.available()) {
+    String command = Serial.readString();
+    command.trim();
+    
+    if (command == "GET_DATA") {
+      collectAndSendData();
+    } else if (command.startsWith("SET:")) {
+      setRTCTime(command);
+    }
+  }
+  
   // GPS verilerini sürekli güncelle
   while (gpsSerial.available() > 0) {
     gps.encode(gpsSerial.read());
   }
-  
-  // Serial komutları işle
-  processSerialCommands();
-  
-  // Servo kontrollerini güncelle
-  updateServoControl();
   
   // Her saniye otomatik veri topla ve gönder
   static unsigned long lastDataCollection = 0;
@@ -350,7 +300,7 @@ void initSDCard() {
   // Log dosyası başlığı oluştur
   if (!SD.exists("/sensor_data.csv")) {
     Serial.println("CSV dosyası oluşturuluyor...");
-    writeFile(SD, "/sensor_data.csv", "Packet_Number,Uydu_Statusu,Hata_Kodu,Timestamp,Pressure1,Pressure2,Yukseklik1,Yukseklik2,Irtifa_Farki,Inis_Hizi,Temperature,Pil_Gerilimi,Latitude,Longitude,Altitude,Pitch,Roll,Yaw,RHRH,IoT_S1_Data,IoT_S2_Data,Takim_No,Sensor_Status\n");
+    writeFile(SD, "/sensor_data.csv", "Packet_Number,Timestamp,Pitch,Roll,Yaw,Pressure,Temperature,Yukseklik1,Latitude,Longitude,Altitude,GPS_Valid,pil_gerilimi,Sensor_Status\n");
     packet_counter = 1;
   } else {
     Serial.println("CSV dosyası mevcut");
@@ -371,8 +321,7 @@ void collectAndSendData() {
   data.pressure2 = 0.0;
   data.yukseklik2 = 0.0;
   data.irtifa_farki = 0.0;
-  data.inis_hizi = 0.0;
-  data.rhrh = current_rhrh;
+  data.rhrh = 0;
   data.iot_s1_data = 0.0;
   data.iot_s2_data = 0.0;
   data.takim_no = 626541;
@@ -418,44 +367,16 @@ void collectAndSendData() {
       
       // Yükseklik hesapla (barometrik formül ile)
       data.yukseklik1 = calculateAltitude(pressure1, temperature);
-      
-      // İniş hızı hesapla
-      unsigned long current_time = millis();
-      if (!first_altitude_reading && (current_time - previous_time) > 0) {
-        // Yükseklik farkı (m)
-        float altitude_diff = data.yukseklik1 - previous_altitude;
-        // Zaman farkı (saniye)
-        float time_diff = (current_time - previous_time) / 1000.0;
-        // İniş hızı (m/s) - negatif değer iniş anlamına gelir
-        data.inis_hizi = altitude_diff / time_diff;
-        
-        // İniş hızını pozitif yapabiliriz (iniş hızının büyüklüğü)
-        if (data.inis_hizi < 0) {
-          data.inis_hizi = -data.inis_hizi; // Mutlak değer al
-        } else {
-          data.inis_hizi = 0.0; // Yükseliyorsa iniş hızı 0
-        }
-      } else {
-        data.inis_hizi = 0.0; // İlk okuma veya zaman farkı yok
-        first_altitude_reading = false;
-      }
-      
-      // Bir sonraki hesaplama için değerleri sakla
-      previous_altitude = data.yukseklik1;
-      previous_time = current_time;
-      
     } else {
       bmp_status = false;
       data.pressure1 = 0.0;
       data.temperature = 0.0;
       data.yukseklik1 = 0.0;
-      data.inis_hizi = 0.0;
     }
   } else {
     data.pressure1 = 0.0;
     data.temperature = 0.0;
     data.yukseklik1 = 0.0;
-    data.inis_hizi = 0.0;
   }
   
   // GPS verilerini oku
@@ -533,48 +454,21 @@ void collectAndSendData() {
 
 String createDataPacket(SensorData data) {
   String packet = "";
-  /*
-  packet += String(data.packet_number) + ",";
-  packet += data.timestamp + ",";
-  packet += String(data.pitch, 3) + ",";
-  packet += String(data.roll, 3) + ",";
-  packet += String(data.yaw, 3) + ",";
-  packet += String(data.pressure1, 2) + ",";
-  packet += String(data.temperature, 2) + ",";
-  packet += String(data.yukseklik1, 2) + ",";
-  packet += String(data.latitude, 6) + ",";
-  packet += String(data.longitude, 6) + ",";
-  packet += String(data.altitude, 2) + ",";
-  packet += String(data.gps_valid ? "1" : "0") + ",";
-  packet += String(data.pil_gerilimi, 3) + ",";
-  packet += data.sensor_status + "\n";
-  */
-  packet += String(data.packet_number) + ",";
-  packet += data.uydu_statusu + ",";
-  packet += data.hata_kodu + ",";
-  packet += data.timestamp + ",";
-  packet += String(data.pressure1, 1) + ",";
-  packet += String(data.pressure2, 1) + ",";
-  packet += String(data.yukseklik1, 1) + ",";
-  packet += String(data.yukseklik2, 1) + ",";
-  packet += String(data.irtifa_farki, 1) + ",";
-  packet += String(data.inis_hizi, 1) + ",";
-  packet += String(data.temperature, 1) + ",";
-  packet += String(data.pil_gerilimi, 3) + ",";
-  packet += String(data.latitude, 6) + ",";
-  packet += String(data.longitude, 6) + ",";
-  packet += String(data.altitude, 1) + ",";
-  //packet += String(data.gps_valid ? "1" : "0") + ",";
-  packet += String(data.pitch, 1) + ",";
-  packet += String(data.roll, 1) + ",";
-  packet += String(data.yaw, 1) + ",";
-  packet += data.rhrh + ",";
-  packet += String(data.iot_s1_data, 1) + ",";
-  packet += String(data.iot_s2_data, 1) + ",";
-  packet += String(data.takim_no) + ",";
-
-  packet += data.sensor_status + "\n";
-
+  
+  packet += "PACKET_NUMBER:" + String(data.packet_number) + "\n";
+  packet += "TIMESTAMP:" + data.timestamp + "\n";
+  packet += "PITCH:" + String(data.pitch, 3) + "\n";
+  packet += "ROLL:" + String(data.roll, 3) + "\n";
+  packet += "YAW:" + String(data.yaw, 3) + "\n";
+  packet += "PRESSURE:" + String(data.pressure1, 2) + "\n";
+  packet += "TEMPERATURE:" + String(data.temperature, 2) + "\n";
+  packet += "YUKSEKLIK1:" + String(data.yukseklik1, 2) + "\n";
+  packet += "LATITUDE:" + String(data.latitude, 6) + "\n";
+  packet += "LONGITUDE:" + String(data.longitude, 6) + "\n";
+  packet += "ALTITUDE:" + String(data.altitude, 2) + "\n";
+  packet += "GPS_VALID:" + String(data.gps_valid ? "1" : "0") + "\n";
+  packet += "pil_gerilimi:" + String(data.pil_gerilimi, 3) + "\n";
+  packet += "SENSOR_STATUS:" + data.sensor_status + "\n";
   
   return packet;
 }
@@ -584,29 +478,19 @@ void saveToSD(SensorData data) {
     return; // SD kart çalışmıyorsa kaydetmeye çalışma
   }
   
-  // Telemetri paketine uygun CSV formatı
   String csvLine = String(data.packet_number) + "," +
-                   String(data.uydu_statusu) + "," +
-                   String(data.hata_kodu) + "," +
                    data.timestamp + "," +
-                   String(data.pressure1, 1) + "," +
-                   String(data.pressure2, 1) + "," +
-                   String(data.yukseklik1, 1) + "," +
-                   String(data.yukseklik2, 1) + "," +
-                   String(data.irtifa_farki, 1) + "," +
-                   String(data.inis_hizi, 1) + "," +
-                   String(data.temperature, 1) + "," +
-                   String(data.pil_gerilimi, 3) + "," +
+                   String(data.pitch, 3) + "," +
+                   String(data.roll, 3) + "," +
+                   String(data.yaw, 3) + "," +
+                   String(data.pressure1, 2) + "," +
+                   String(data.temperature, 2) + "," +
+                   String(data.yukseklik1, 2) + "," +
                    String(data.latitude, 6) + "," +
                    String(data.longitude, 6) + "," +
-                   String(data.altitude, 1) + "," +
-                   String(data.pitch, 1) + "," +
-                   String(data.roll, 1) + "," +
-                   String(data.yaw, 1) + "," +
-                   data.rhrh + "," +
-                   String(data.iot_s1_data, 1) + "," +
-                   String(data.iot_s2_data, 1) + "," +
-                   String(data.takim_no) + "," +
+                   String(data.altitude, 2) + "," +
+                   String(data.gps_valid ? "1" : "0") + "," +
+                   String(data.pil_gerilimi, 3) + "," +
                    data.sensor_status + "\n";
   
   if (!appendFile(SD, "/sensor_data.csv", csvLine.c_str())) {
@@ -647,430 +531,4 @@ void updateSensorStatus() {
     
     // SD kart kontrolü
     if (!sd_status) {
-      Serial.println("SD kart yeniden bağlanmaya çalışılıyor...");
-      
-      // Basit SD kart yeniden başlatma
-      if (SD.begin()) {
-        sd_status = true;
-        Serial.println("SD kart yeniden bağlandı");
-        
-        // CSV dosyası varsa kontrol et, yoksa oluştur
-        if (!SD.exists("/sensor_data.csv")) {
-          writeFile(SD, "/sensor_data.csv", "Packet_Number,Uydu_Statusu,Hata_Kodu,Timestamp,Pressure1,Pressure2,Yukseklik1,Yukseklik2,Irtifa_Farki,Inis_Hizi,Temperature,Pil_Gerilimi,Latitude,Longitude,Altitude,Pitch,Roll,Yaw,RHRH,IoT_S1_Data,IoT_S2_Data,Takim_No,Sensor_Status\n");
-        }
-      } else {
-        Serial.println("SD kart yeniden bağlanma başarısız");
-      }
-    }
-  }
-}
-
-void writeFile(fs::FS &fs, const char *path, const char *message) {
-  Serial.printf("SD'ye yazılıyor: %s\n", path);
-  File file = fs.open(path, FILE_WRITE);
-  if (!file) {
-    Serial.println("SD dosya yazma hatası - dosya açılamadı");
-    sd_status = false;
-    return;
-  }
-  if (file.print(message)) {
-    Serial.println("SD dosya başarıyla yazıldı");
-  } else {
-    Serial.println("SD yazma başarısız - yazma hatası");
-    sd_status = false;
-  }
-  file.close();
-}
-
-bool appendFile(fs::FS &fs, const char *path, const char *message) {
-  File file = fs.open(path, FILE_APPEND);
-  if (!file) {
-    Serial.println("SD dosya ekleme hatası - dosya açılamadı");
-    return false;
-  }
-  
-  size_t bytesWritten = file.print(message);
-  if (bytesWritten > 0) {
-    file.close();
-    return true;
-  } else {
-    Serial.println("SD ekleme başarısız - yazma hatası");
-    file.close();
-    return false;
-  }
-}
-
-void setRTCTime(String command) {
-  // Format: SET:2025,7,18,14,30,0 (Yıl,Ay,Gün,Saat,Dakika,Saniye)
-  command = command.substring(4); // "SET:" kısmını çıkar
-  
-  int values[6];
-  int index = 0;
-  
-  // String'i parçala
-  while (command.length() > 0 && index < 6) {
-    int commaIndex = command.indexOf(',');
-    if (commaIndex == -1) {
-      values[index] = command.toInt();
-      break;
-    }
-    values[index] = command.substring(0, commaIndex).toInt();
-    command = command.substring(commaIndex + 1);
-    index++;
-  }
-  
-  if (index == 5) { // 6 değer alındıysa
-    rtc.adjust(DateTime(values[0], values[1], values[2], values[3], values[4], values[5]));
-    Serial.printf("RTC zamanı ayarlandı: %02d/%02d/%04d %02d:%02d:%02d\n", 
-                  values[2], values[1], values[0], values[3], values[4], values[5]);
-    rtc_status = true;
-  } else {
-    Serial.println("Hatalı format! Kullanım: SET:2025,7,18,14,30,0");
-  }
-}
-
-void loadLastPacketNumber() {
-  Serial.println("Son paket numarası okunuyor...");
-  
-  File file = SD.open("/sensor_data.csv", FILE_READ);
-  if (!file) {
-    Serial.println("CSV dosyası açılamadı, paket numarası 1'den başlayacak");
-    packet_counter = 1;
-    return;
-  }
-  
-  String lastLine = "";
-  String currentLine = "";
-  
-  // Dosyayı okuyup son satırı bul
-  while (file.available()) {
-    char c = file.read();
-    if (c == '\n') {
-      if (currentLine.length() > 0) {
-        lastLine = currentLine;
-        currentLine = "";
-      }
-    } else {
-      currentLine += c;
-    }
-  }
-  
-  // Son satır da ekle (dosya \n ile bitmiyorsa)
-  if (currentLine.length() > 0) {
-    lastLine = currentLine;
-  }
-  
-  file.close();
-  
-  // Son satırdan paket numarasını çıkar
-  if (lastLine.length() > 0 && lastLine != "Packet_Number,Uydu_Statusu,Hata_Kodu,Timestamp,Pressure1,Pressure2,Yukseklik1,Yukseklik2,Irtifa_Farki,Inis_Hizi,Temperature,Pil_Gerilimi,Latitude,Longitude,Altitude,Pitch,Roll,Yaw,RHRH,IoT_S1_Data,IoT_S2_Data,Takim_No,Sensor_Status") {
-    int commaIndex = lastLine.indexOf(',');
-    if (commaIndex > 0) {
-      String packetNumStr = lastLine.substring(0, commaIndex);
-      unsigned long lastPacketNum = packetNumStr.toInt();
-      if (lastPacketNum > 0) {
-        packet_counter = lastPacketNum + 1;
-        Serial.printf("Son paket numarası: %lu, devam edecek: %lu\n", lastPacketNum, packet_counter);
-      } else {
-        packet_counter = 1;
-        Serial.println("Paket numarası okunamadı, 1'den başlayacak");
-      }
-    } else {
-      packet_counter = 1;
-      Serial.println("CSV formatı hatalı, paket numarası 1'den başlayacak");
-    }
-  } else {
-    packet_counter = 1;
-    Serial.println("CSV dosyası boş, paket numarası 1'den başlayacak");
-  }
-}
-
-float calculateAltitude(float P, float T_celsius) {
-  const float P0 = 101325.0;     // Deniz seviyesi basıncı (Pa)
-  const float L = 0.0065;        // Sıcaklık gradyanı (K/m)
-  const float R = 287.05;        // Gaz sabiti (J/kg·K)
-  const float g = 9.80665;       // Yerçekimi (m/s²)
-
-  float T = T_celsius + 273.15;  // Celsius -> Kelvin dönüşümü
-
-  // Barometrik formül:
-  float h = (T / L) * (1 - pow(P / P0, (R * L) / g));
-  return h;
-}
-
-void initServos() {
-  Serial.println("SG90 180° Servo motorlar başlatılıyor...");
-  
-  // PWM kanallarını ayarla (SG90 180° için 50Hz)
-  ledcSetup(SERVO1_CHANNEL, SERVO_FREQ, SERVO_RESOLUTION);
-  ledcSetup(SERVO2_CHANNEL, SERVO_FREQ, SERVO_RESOLUTION);
-  
-  // PWM kanallarını pin'lere bağla
-  ledcAttachPin(SERVO1_PIN, SERVO1_CHANNEL);
-  ledcAttachPin(SERVO2_PIN, SERVO2_CHANNEL);
-  
-  delay(500); // PWM'in hazır olması için bekle
-  
-  // Başlangıç durumunda servolar b pozisyonunda (50°)
-  setServoPosition(SERVO1_CHANNEL, 50);
-  setServoPosition(SERVO2_CHANNEL, 50);
-  
-  delay(1000); // Servo motorların pozisyona gelmesi için bekle
-  
-  Serial.println("SG90 180° Servo motorlar başarıyla başlatıldı");
-  Serial.println("Servo1 Pin: " + String(SERVO1_PIN) + " (PWM Kanal " + String(SERVO1_CHANNEL) + ")");
-  Serial.println("Servo2 Pin: " + String(SERVO2_PIN) + " (PWM Kanal " + String(SERVO2_CHANNEL) + ")");
-  Serial.println("RHRH varsayılan değer: " + current_rhrh);
-  Serial.println("Pozisyon kodları (SG90 180°): b=50°, m=0°, k=100°, y=150°");
-  
-  // Test hareketi
-  Serial.println("SG90 180° Servo pozisyon test hareketi yapılıyor...");
-  
-  // Servo1 pozisyon test
-  Serial.println("Servo1: 50° pozisyon (b)");
-  setServoPosition(SERVO1_CHANNEL, 50);
-  delay(2000);
-  
-  Serial.println("Servo1: 0° pozisyon (m)");
-  setServoPosition(SERVO1_CHANNEL, 0);
-  delay(2000);
-  
-  Serial.println("Servo1: 100° pozisyon (k)");
-  setServoPosition(SERVO1_CHANNEL, 100);
-  delay(2000);
-  
-  // Servo2 pozisyon test
-  Serial.println("Servo2: 50° pozisyon (b)");
-  setServoPosition(SERVO2_CHANNEL, 50);
-  delay(2000);
-  
-  Serial.println("SG90 180° Servo pozisyon test hareketi tamamlandı - b pozisyonuna (50°) dönülüyor");
-  setServoPosition(SERVO1_CHANNEL, 50);
-  setServoPosition(SERVO2_CHANNEL, 50);
-}
-
-void processSerialCommands() {
-  if (Serial.available()) {
-    String command = Serial.readStringUntil('\n');
-    command.trim();
-    
-    if (command.startsWith("RHRH:")) {
-      String rhrhValue = command.substring(5);
-      processRHRHCommand(rhrhValue);
-    }
-    else if (command.startsWith("SET:")) {
-      setRTCTime(command);
-    }
-    else if (command == "GET_DATA") {
-      collectAndSendData();
-    }
-    else if (command == "STATUS") {
-      Serial.println("=== SİSTEM DURUMU ===");
-      Serial.println("BMP280: " + String(bmp_status ? "OK" : "HATA"));
-      Serial.println("MPU6050: " + String(mpu_status ? "OK" : "HATA"));
-      Serial.println("RTC: " + String(rtc_status ? "OK" : "HATA"));
-      Serial.println("GPS: " + String(gps_status ? "OK" : "HATA"));
-      Serial.println("SD Kart: " + String(sd_status ? "OK" : "HATA"));
-      Serial.println("ADC: " + String(adc_status ? "OK" : "HATA"));
-      Serial.println("Güncel RHRH: " + current_rhrh);
-      Serial.println("Paket sayısı: " + String(packet_counter));
-    }
-    else if (command == "SERVO_TEST") {
-      Serial.println("=== SG90 180° SERVO TEST ===");
-      Serial.println("SG90 180° Servo pozisyon test hareketi başlıyor...");
-      
-      // Test dizisi (SG90 180° pozisyon kontrolü için)
-      Serial.println("Servo1: 50° pozisyon (b) - (2sn)");
-      setServoPosition(SERVO1_CHANNEL, 50);
-      delay(2000);
-      
-      Serial.println("Servo1: 0° pozisyon (m) - (2sn)");
-      setServoPosition(SERVO1_CHANNEL, 0);
-      delay(2000);
-      
-      Serial.println("Servo1: 100° pozisyon (k) - (2sn)");
-      setServoPosition(SERVO1_CHANNEL, 100);
-      delay(2000);
-      
-      Serial.println("Servo1: 150° pozisyon (y) - (2sn)");
-      setServoPosition(SERVO1_CHANNEL, 150);
-      delay(2000);
-      
-      Serial.println("Servo2: 50° pozisyon (b) - (2sn)");
-      setServoPosition(SERVO2_CHANNEL, 50);
-      delay(2000);
-      
-      Serial.println("Servo2: 0° pozisyon (m) - (2sn)");
-      setServoPosition(SERVO2_CHANNEL, 0);
-      delay(2000);
-      
-      Serial.println("Servo2: 100° pozisyon (k) - (2sn)");
-      setServoPosition(SERVO2_CHANNEL, 100);
-      delay(2000);
-      
-      Serial.println("Servo2: 150° pozisyon (y) - (2sn)");
-      setServoPosition(SERVO2_CHANNEL, 150);
-      delay(2000);
-      
-      // b pozisyonuna getir (varsayılan)
-      Serial.println("Servolar b pozisyonuna getiriliyor (50°)");
-      setServoPosition(SERVO1_CHANNEL, 50);
-      setServoPosition(SERVO2_CHANNEL, 50);
-      current_rhrh = "b0b0"; // RHRH değerini sıfırla
-      
-      Serial.println("SG90 180° Servo test tamamlandı");
-    }
-  }
-}
-
-void processRHRHCommand(String command) {
-  // RHRH formatı: HSHD (Harf Sayı Harf Sayı) örneğin: m2k6
-  if (command.length() != 4) {
-    Serial.println("HATA: RHRH formatı yanlış! Format: HSHS (örn: m2k6)");
-    return;
-  }
-  
-  char pos1 = command.charAt(0);  // İlk pozisyon harfi
-  char dur1 = command.charAt(1);  // İlk süre rakamı
-  char pos2 = command.charAt(2);  // İkinci pozisyon harfi
-  char dur2 = command.charAt(3);  // İkinci süre rakamı
-  
-  // Geçerli pozisyon kontrolü
-  if ((pos1 != 'b' && pos1 != 'm' && pos1 != 'k' && pos1 != 'y') ||
-      (pos2 != 'b' && pos2 != 'm' && pos2 != 'k' && pos2 != 'y')) {
-    Serial.println("HATA: Geçersiz pozisyon! Kullanılabilir: b, m, k, y");
-    return;
-  }
-  
-  // Geçerli süre kontrolü (0-9 arası)
-  if (!isdigit(dur1) || !isdigit(dur2)) {
-    Serial.println("HATA: Süre değerleri rakam olmalı! (0-9)");
-    return;
-  }
-  
-  // RHRH komutunu uygula
-  current_rhrh = command;
-  
-  // Servo pozisyonlarını ayarla
-  int servo1_pos = getServoPosition(pos1);
-  int servo2_pos = getServoPosition(pos2);
-  
-  Serial.println("RHRH komutu uygulandı: " + command);
-  Serial.println("Servo1: " + String(servo1_pos) + "° - " + String((dur1 - '0')) + "s");
-  Serial.println("Servo2: " + String(servo2_pos) + "° - " + String((dur2 - '0')) + "s");
-  
-  // Servo pozisyonlarını ayarla
-  Serial.println("Servo1 pozisyonu ayarlanıyor: " + String(servo1_pos) + "°");
-  setServoPosition(SERVO1_CHANNEL, servo1_pos);
-  delay(100); // Servo hareket etmeye başlaması için bekle
-  
-  Serial.println("Servo2 pozisyonu ayarlanıyor: " + String(servo2_pos) + "°");
-  setServoPosition(SERVO2_CHANNEL, servo2_pos);
-  delay(100); // Servo hareket etmeye başlaması için bekle
-  
-  // Süreleri ayarla
-  servo1_duration = (dur1 - '0') * 1000; // Saniyeyi milisaniyeye çevir
-  servo2_duration = (dur2 - '0') * 1000;
-  
-  // Zamanlayıcıları başlat
-  servo1_start_time = millis();
-  servo2_start_time = millis();
-  servo1_active = (servo1_duration > 0);
-  servo2_active = (servo2_duration > 0);
-  
-  Serial.println("Servo pozisyonları ayarlandı ve zamanlayıcı başlatıldı");
-}
-
-int getServoPosition(char position) {
-  switch(position) {
-    case 'b': return 50;   // 50° pozisyon (varsayılan)
-    case 'm': return 0;    // 0° pozisyon
-    case 'k': return 100;  // 100° pozisyon
-    case 'y': return 150;  // 150° pozisyon
-    default: return 50;    // Varsayılan 50° (b pozisyonu)
-  }
-}
-
-void updateServoControl() {
-  unsigned long currentTime = millis();
-  bool rhrh_changed = false;
-  
-  // Servo1 süre kontrolü
-  if (servo1_active && (currentTime - servo1_start_time >= servo1_duration)) {
-    Serial.println("Servo1 süre doldu, b pozisyonuna (50°) dönüyor");
-    setServoPosition(SERVO1_CHANNEL, 50); // Servo b pozisyonuna (50°)
-    delay(100); // Servo hareket etmesi için kısa bekle
-    servo1_active = false;
-    Serial.println("Servo1 b pozisyonuna getirildi");
-    
-    // RHRH değerini güncelle
-    current_rhrh[0] = 'b';
-    current_rhrh[1] = '0';
-    rhrh_changed = true;
-  }
-  
-  // Servo2 süre kontrolü  
-  if (servo2_active && (currentTime - servo2_start_time >= servo2_duration)) {
-    Serial.println("Servo2 süre doldu, b pozisyonuna (50°) dönüyor");
-    setServoPosition(SERVO2_CHANNEL, 50); // Servo b pozisyonuna (50°)
-    delay(100); // Servo hareket etmesi için kısa bekle
-    servo2_active = false;
-    Serial.println("Servo2 b pozisyonuna getirildi");
-    
-    // RHRH değerini güncelle
-    current_rhrh[2] = 'b';
-    current_rhrh[3] = '0';
-    rhrh_changed = true;
-  }
-  
-  // RHRH değeri değiştiyse bilgilendir
-  if (rhrh_changed) {
-    Serial.println("RHRH güncellendi: " + current_rhrh);
-  }
-}
-
-// SG90 servo motor için PWM pozisyon kontrol fonksiyonları
-void setServoPosition(int channel, int angle) {
-  // Açıyı duty cycle'a çevir
-  int dutyCycle = angleToDutyCycle(angle);
-  
-  // PWM sinyali gönder
-  ledcWrite(channel, dutyCycle);
-  
-  String positionName = "";
-  if (angle == 50) positionName = "50° (b)";
-  else if (angle == 0) positionName = "0° (m)";
-  else if (angle == 100) positionName = "100° (k)";
-  else if (angle == 150) positionName = "150° (y)";
-  else positionName = String(angle) + "°";
-  
-  Serial.println("Kanal " + String(channel) + " -> " + positionName + " (Angle: " + String(angle) + "°, Duty: " + String(dutyCycle) + ")");
-}
-
-void moveServoToNeutral(int channel) {
-  setServoPosition(channel, 50); // 50° b pozisyonu (varsayılan durum)
-}
-
-int angleToDutyCycle(int angle) {
-  // SG90 Servo özellikleri:
-  // 0°: ~500µs pulse width
-  // 50°: ~1250µs pulse width
-  // 100°: ~1750µs pulse width  
-  // 150°: ~2250µs pulse width
-  // PWM period = 20ms (50Hz)
-  
-  // Açıyı sınırla
-  angle = constrain(angle, 0, 150);
-  
-  // Pulse width hesapla (lineer interpolasyon)
-  int pulseWidth = map(angle, 0, 150, SERVO_0_DEG, SERVO_150_DEG);
-  
-  // 16-bit çözünürlük (0-65535)
-  // 20ms period için full range
-  const int PWM_PERIOD = 20000; // 20ms in microseconds
-  
-  // Duty cycle hesapla (16-bit)
-  int dutyCycle = (pulseWidth * 65535) / PWM_PERIOD;
-  
-  return dutyCycle;
-}
+      Serial.println("SD kart yeniden bağlanmaya çalışılıyor..."
