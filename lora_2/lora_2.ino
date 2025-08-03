@@ -16,6 +16,10 @@ LoRa_E22 E22(&Serial2, LORA_AUX, LORA_M0, LORA_M1);
 
 uint16_t paket_sayisi = 1;
 
+// Komut değişkenleri
+uint32_t rhrh_degeri = encodeRHRH('0', '0', '0', '0'); // Başlangıç değeri 0000
+uint8_t manuel_ayrilma_degeri = 0; // Başlangıç değeri false
+
 // SEND komutu için zamanlayıcı değişkenleri
 bool send_aktif = false;
 unsigned long son_send_zamani = 0;
@@ -50,7 +54,16 @@ void setup() {
   Serial2.begin(9600, SERIAL_8N1, LORA_RX, LORA_TX);
   E22.begin();
   Serial.println("LORA 2 - Button Control baslatildi");
-  Serial.println("'SEND' komutunu yazarak Lora1'e button control gonderebilirsiniz.");
+  Serial.println("Komutlar:");
+  Serial.println("  'SEND' - 5 kere button control gonder");
+  Serial.println("  'RHRH:XXXX' - RHRH degerini guncelle (ornek: RHRH:5C9D)");
+  Serial.println("  'MANUEL_AYRILMA' - Manuel ayrilma true yap");
+  Serial.println("  'RESET_MANUEL' - Manuel ayrilma false yap");
+  Serial.println();
+  Serial.println("Baslangic degerleri:");
+  Serial.println("  RHRH: 0000");
+  Serial.println("  Manuel Ayrilma: false");
+  Serial.println();
   printModuleInfo();
   printConfig();
   delay(500);
@@ -62,16 +75,24 @@ void sendButtonControlToLora1() {
   
   buttonControl.packet_type = PACKET_TYPE_BUTTON_CONTROL;
   buttonControl.paket_sayisi = paket_sayisi;
-  buttonControl.manuel_ayrilma = 0; // false
-  buttonControl.rhrh = encodeRHRH('5', 'C', '9', 'D');
+  buttonControl.manuel_ayrilma = manuel_ayrilma_degeri; // Güncellenmiş değer kullan
+  buttonControl.rhrh = rhrh_degeri; // Güncellenmiş değer kullan
   
   ResponseStatus rs = E22.sendFixedMessage(0x00, 0x0A, 10, (uint8_t*)&buttonControl, sizeof(buttonControl));
     
+  // RHRH ve Manuel Ayrılma durumunu da yazdır
+  char rhrh_str[5];
+  decodeRHRH(rhrh_degeri, rhrh_str);
+  
   Serial.print("Lora1'e binary button_control gonderildi (");
   Serial.print(sizeof(buttonControl));
   Serial.print(" bytes), Paket#: ");
   Serial.print(paket_sayisi);
-  Serial.print(", Deneme: ");
+  Serial.print(", RHRH: ");
+  Serial.print(rhrh_str);
+  Serial.print(", Manuel Ayrilma: ");
+  Serial.print(manuel_ayrilma_degeri ? "true" : "false");
+  Serial.print(", Status: ");
   Serial.println(rs.getResponseDescription());
   
   paket_sayisi++;
@@ -92,6 +113,32 @@ void loop() {
       sendButtonControlToLora1(); // İlk gönderiyi hemen yap
       send_sayaci++;
     }
+    else if (command.startsWith("RHRH:")) {
+      // RHRH komutunu işle (format: RHRH:5C9D)
+      String rhrh_str = command.substring(5); // "RHRH:" kısmını atla
+      if (rhrh_str.length() == 4) {
+        char r1 = rhrh_str[0];
+        char h1 = rhrh_str[1];
+        char r2 = rhrh_str[2];
+        char h2 = rhrh_str[3];
+        
+        rhrh_degeri = encodeRHRH(r1, h1, r2, h2);
+        Serial.print("RHRH degeri guncellendi: ");
+        Serial.println(rhrh_str);
+      } else {
+        Serial.println("HATA: RHRH formatı yanlış! Örnek: RHRH:5C9D");
+      }
+    }
+    else if (command.equalsIgnoreCase("MANUEL_AYRILMA")) {
+      // Manuel ayrılma komutunu işle
+      manuel_ayrilma_degeri = 1; // true yap
+      Serial.println("Manuel ayrilma degeri true olarak ayarlandi");
+    }
+    else if (command.equalsIgnoreCase("RESET_MANUEL")) {
+      // Manuel ayrılma değerini sıfırla
+      manuel_ayrilma_degeri = 0; // false yap
+      Serial.println("Manuel ayrilma degeri false olarak sifirlandi");
+    }
   }
   
   // SEND zamanlayıcısı kontrol et
@@ -104,6 +151,12 @@ void loop() {
       if (send_sayaci >= max_send_sayisi) {
         send_aktif = false;
         Serial.println("5 kere button control gonderimi tamamlandi.");
+        
+        // Eğer manuel ayrılma aktifse, gönderim sonrası sıfırla
+        if (manuel_ayrilma_degeri == 1) {
+          manuel_ayrilma_degeri = 0;
+          Serial.println("Manuel ayrilma degeri otomatik olarak false'a sifirlandi.");
+        }
       }
     }
   }

@@ -17,6 +17,9 @@ LoRa_E22 E22(&Serial2, LORA_AUX, LORA_M0, LORA_M1);
 uint16_t paket_sayisi_lora2 = 1;
 uint16_t paket_sayisi_lora3 = 1;
 
+// RHRH değeri - başlangıçta 0000, lora_2'den gelen değerle güncellenecek
+uint32_t current_rhrh = encodeRHRH('0', '0', '0', '0');
+
 void printModuleInfo() {
   ResponseStructContainer c = E22.getModuleInformation();
   ModuleInformation moduleInfo = *(ModuleInformation*) c.data;
@@ -44,6 +47,15 @@ void setup() {
   Serial2.begin(9600, SERIAL_8N1, LORA_RX, LORA_TX);
   E22.begin();
   Serial.println("LORA 1 - Ana Kontrol Merkezi baslatildi");
+  
+  // Başlangıç RHRH değerini göster
+  char rhrh_str[5];
+  decodeRHRH(current_rhrh, rhrh_str);
+  Serial.print("Baslangic RHRH degeri: ");
+  Serial.println(rhrh_str);
+  Serial.println("RHRH degeri lora_2'den gelen Button Control paketleri ile guncellenecek.");
+  Serial.println();
+  
   printModuleInfo();
   printConfig();
   delay(500);
@@ -72,17 +84,23 @@ void sendTelemetryToLora2() {
   telemetry.pitch = 152; // 15.2° * 10
   telemetry.roll = 87; // 8.7° * 10
   telemetry.yaw = 1805; // 180.5° * 10
-  telemetry.rhrh = encodeRHRH('1', 'A', '2', 'B');
+  telemetry.rhrh = current_rhrh; // Güncel RHRH değerini kullan
   telemetry.iot_s1_data = 225; // 22.5°C * 10
   telemetry.iot_s2_data = 231; // 23.1°C * 10
   telemetry.takim_no = TAKIM_NO;
   
   ResponseStatus rs = E22.sendFixedMessage(0x00, 0x0A, 20, (uint8_t*)&telemetry, sizeof(telemetry));
   
+  // Gönderilen RHRH değerini göster
+  char rhrh_str[5];
+  decodeRHRH(current_rhrh, rhrh_str);
+  
   Serial.print("Lora2'ye binary telemetry gonderildi (");
   Serial.print(sizeof(telemetry));
   Serial.print(" bytes), Paket#: ");
-  Serial.println(paket_sayisi_lora2);
+  Serial.print(paket_sayisi_lora2);
+  Serial.print(", RHRH: ");
+  Serial.println(rhrh_str);
   Serial.print("Durum: ");
   Serial.println(rs.getResponseDescription());
   
@@ -135,10 +153,27 @@ bool waitForMessage(unsigned long timeout_ms) {
               Serial.print(btn->paket_sayisi);
               Serial.print(", Manuel Ayrilma: ");
               Serial.print(btn->manuel_ayrilma ? "true" : "false");
+              
+              // RHRH değerini güncelle
+              uint32_t eski_rhrh = current_rhrh;
+              current_rhrh = btn->rhrh;
+              
               char rhrh_str[5];
               decodeRHRH(btn->rhrh, rhrh_str);
               Serial.print(", RHRH: ");
-              Serial.println(rhrh_str);
+              Serial.print(rhrh_str);
+              
+              // Eğer RHRH değişmişse bilgi ver
+              if (eski_rhrh != current_rhrh) {
+                char eski_rhrh_str[5];
+                decodeRHRH(eski_rhrh, eski_rhrh_str);
+                Serial.print(" (RHRH guncellendi: ");
+                Serial.print(eski_rhrh_str);
+                Serial.print(" -> ");
+                Serial.print(rhrh_str);
+                Serial.print(")");
+              }
+              Serial.println();
             }
             break;
             

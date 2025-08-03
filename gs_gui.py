@@ -767,13 +767,20 @@ class GroundStationGUI(QMainWindow):
         rhrh_code = ''.join([combo.currentText() for combo in self.rhrh_combos])
         self.add_log_message(f"Telekomut gönderildi: RHRH={rhrh_code}")
         
-        # Serial bağlantı varsa SEND komutunu gönder
+        # Serial bağlantı varsa RHRH komutunu gönder
         if self.is_listening and self.serial_connection:
             try:
+                # Önce RHRH değerini güncelle
+                rhrh_command = f'RHRH:{rhrh_code}\n'
+                self.serial_connection.write(rhrh_command.encode())
+                self.add_log_message(f"RHRH komutu LoRa'ya gönderildi: {rhrh_code}")
+                
+                # Kısa bir bekleme sonra SEND komutunu gönder
+                time.sleep(0.1)
                 self.serial_connection.write(b'SEND\n')
                 self.add_log_message("SEND komutu LoRa'ya gönderildi (RHRH tetikleyicisi)")
             except serial.SerialException as e:
-                self.add_log_message(f"SEND komutu gönderme hatası: {str(e)}")
+                self.add_log_message(f"RHRH/SEND komutu gönderme hatası: {str(e)}")
         else:
             self.add_log_message("UYARI: COM bağlantısı yok, komut gönderilemedi!")
         
@@ -963,13 +970,19 @@ class GroundStationGUI(QMainWindow):
         """Manuel ayrılma komutu"""
         self.add_log_message("UYARI: Manuel ayrılma komutu gönderildi!")
         
-        # Serial bağlantı varsa SEND komutunu gönder
+        # Serial bağlantı varsa manuel ayrılma komutunu gönder
         if self.is_listening and self.serial_connection:
             try:
+                # Manuel ayrılma değerini true yap
+                self.serial_connection.write(b'MANUEL_AYRILMA\n')
+                self.add_log_message("Manuel ayrılma komutu LoRa'ya gönderildi")
+                
+                # Kısa bir bekleme sonra SEND komutunu gönder
+                time.sleep(0.1)
                 self.serial_connection.write(b'SEND\n')
                 self.add_log_message("SEND komutu LoRa'ya gönderildi (Manuel ayrılma tetikleyicisi)")
             except serial.SerialException as e:
-                self.add_log_message(f"SEND komutu gönderme hatası: {str(e)}")
+                self.add_log_message(f"Manuel ayrılma komutu gönderme hatası: {str(e)}")
         else:
             self.add_log_message("UYARI: COM bağlantısı yok, komut gönderilemedi!")
         
