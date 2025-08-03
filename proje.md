@@ -207,20 +207,20 @@ Tüm Loraların pinleri aşağıdaki şekilde tanımlanacak
 ## Widget Yerleşimleri
 
 Main Screen (yatay)
-1. Sol Panel (dikey) (%50 genişlik)
-    1.1 Grafikler (%60 yükseklik) (3x2)     // bazı telemetri verilerinin grafikleri
+1. Sol Panel (dikey)
+    1.1 Grafikler (3x2)     // bazı telemetri verilerinin grafikleri
         1.1.(1,1) Basınç grafiği: pascal
         1.1.(1,2) Yükseklik grafiği: metre
         1.1.(2,1) İniş Hızı: m/s
         1.1.(2,2) Atmosfer Sıcaklığı: celcius
         1.1.(3,1) İrtifa Farkı: m
         1.1.(3,2) IoT Sıcaklık: celcius
-    1.2 Log Ekranı (%40 yükseklik)          // debug için log ekranı, text alanı
-2. Sağ Panel (dikey) (%50 genişlik)
-    2.1 Kamera ve Harita (%35 yükseklik) (yatay)
+    1.2 Log Ekranı          // debug için log ekranı, text alanı
+2. Sağ Panel (dikey)
+    2.1 Kamera ve Harita (yatay)
         2.1.1 Kamera        // kamera görüntüsü olacak
         2.1.2 Harita        // konum verisinden harita üzerinde yer gösterilecek
-    2.2 Data ve 3d model (%35 yükseklik) (yatay)
+    2.2 Data ve 3d model (yatay)
         2.2.1 Data (dikey)
             2.2.1.1 Telekomut (dikey)
                 2.2.1.1.1   // 4 adet yanyana liste seçeneği, şimdilik 1, 2 ve A seçilebilsin
@@ -228,7 +228,7 @@ Main Screen (yatay)
             2.2.1.2 Hata Kodu   // 2 satır ve 6 sütunlu bir grafik. Üst satırlarda 1, 2, 3, 4, 5, 6 yazacak. Alt satırdaki hücrelerde bir şey yazmayacak, dolgu renkleri ya kırmızı ya da yeşil olacak
             2.2.1.3 Text    // Üst satır: Pil Gerilimi: 5V (%37), Alt satır: Statü: 0 (Uçuşa Hazır)
         2.2.2 3D Model      // pitch, roll, yaw bilgise göre model uydunun 3 boyutlu konumu
-    2.3 Com Seçimi/Ayrılma ve Logo (%30 yükseklik) (yatay)
+    2.3 Com Seçimi/Ayrılma ve Logo (yatay)
         2.3.1 Com Seçimi/Ayrılma (dikey)
             2.3.1.1         // Manuel Ayrılma butonu
             2.3.1.2         // Com Seçimi: texti
