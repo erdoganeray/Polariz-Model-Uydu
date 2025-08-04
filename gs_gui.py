@@ -362,12 +362,39 @@ class GroundStationGUI(QMainWindow):
             plot_widget.getAxis('bottom').setTextPen('#495057')
             plot_widget.setTitle(title, color='#495057', size='12pt')
             
-            self.graphs[graph_id] = {
-                'widget': plot_widget,
-                'data_x': [],
-                'data_y': [],
-                'curve': plot_widget.plot(pen={'color': '#0d6efd', 'width': 2})  # Mavi çizgi
-            }
+            # Çift çizgili grafikler için farklı yapı
+            if graph_id in ['pressure', 'altitude', 'iot_temp']:
+                # İki ayrı çizgi ve veri dizisi
+                self.graphs[graph_id] = {
+                    'widget': plot_widget,
+                    'data_x': [],
+                    'data_y1': [],  # İlk çizgi verisi
+                    'data_y2': [],  # İkinci çizgi verisi
+                    'curve1': plot_widget.plot(pen={'color': '#0d6efd', 'width': 2}),  # Mavi çizgi
+                    'curve2': plot_widget.plot(pen={'color': '#dc3545', 'width': 2})   # Kırmızı çizgi
+                }
+                
+                # Legend ekleme
+                if graph_id == 'pressure':
+                    plot_widget.addLegend()
+                    self.graphs[graph_id]['curve1'].setData(name='Yük (Basınç1)')
+                    self.graphs[graph_id]['curve2'].setData(name='Taşıyıcı (Basınç2)')
+                elif graph_id == 'altitude':
+                    plot_widget.addLegend()
+                    self.graphs[graph_id]['curve1'].setData(name='Yük (Yükseklik1)')
+                    self.graphs[graph_id]['curve2'].setData(name='Taşıyıcı (Yükseklik2)')
+                elif graph_id == 'iot_temp':
+                    plot_widget.addLegend()
+                    self.graphs[graph_id]['curve1'].setData(name='IoT Sensor 1')
+                    self.graphs[graph_id]['curve2'].setData(name='IoT Sensor 2')
+            else:
+                # Tek çizgili grafikler için mevcut yapı
+                self.graphs[graph_id] = {
+                    'widget': plot_widget,
+                    'data_x': [],
+                    'data_y': [],
+                    'curve': plot_widget.plot(pen={'color': '#0d6efd', 'width': 2})  # Mavi çizgi
+                }
             
             graphs_layout.addWidget(plot_widget, row, col)
         
@@ -729,20 +756,37 @@ class GroundStationGUI(QMainWindow):
         # Simülasyon kaldırıldı - sadece gerçek COM verisiyle çalışacak
         pass
         
-    def update_graph(self, graph_id, x_value, y_value):
-        """Grafik güncelleme"""
+    def update_graph(self, graph_id, x_value, y_value1, y_value2=None):
+        """Grafik güncelleme - tek veya çift çizgi desteği"""
         graph = self.graphs[graph_id]
         
-        graph['data_x'].append(x_value)
-        graph['data_y'].append(y_value)
-        
-        # Son 30 saniye verilerini tut
-        while len(graph['data_x']) > 0 and graph['data_x'][-1] - graph['data_x'][0] > 30:
-            graph['data_x'].pop(0)
-            graph['data_y'].pop(0)
+        if graph_id in ['pressure', 'altitude', 'iot_temp'] and y_value2 is not None:
+            # Çift çizgili grafikler
+            graph['data_x'].append(x_value)
+            graph['data_y1'].append(y_value1)
+            graph['data_y2'].append(y_value2)
             
-        # Grafiği güncelle
-        graph['curve'].setData(graph['data_x'], graph['data_y'])
+            # Son 30 saniye verilerini tut
+            while len(graph['data_x']) > 0 and graph['data_x'][-1] - graph['data_x'][0] > 30:
+                graph['data_x'].pop(0)
+                graph['data_y1'].pop(0)
+                graph['data_y2'].pop(0)
+                
+            # Her iki çizgiyi güncelle
+            graph['curve1'].setData(graph['data_x'], graph['data_y1'])
+            graph['curve2'].setData(graph['data_x'], graph['data_y2'])
+        else:
+            # Tek çizgili grafikler (mevcut sistem)
+            graph['data_x'].append(x_value)
+            graph['data_y'].append(y_value1)
+            
+            # Son 30 saniye verilerini tut
+            while len(graph['data_x']) > 0 and graph['data_x'][-1] - graph['data_x'][0] > 30:
+                graph['data_x'].pop(0)
+                graph['data_y'].pop(0)
+                
+            # Grafiği güncelle
+            graph['curve'].setData(graph['data_x'], graph['data_y'])
         
     def update_3d_model(self):
         """3D modeli güncelleme"""
@@ -941,13 +985,12 @@ class GroundStationGUI(QMainWindow):
                     current_time = time.time() - self.start_time
                     
                     # Update graphs with real data
-                    self.update_graph('pressure', current_time, basinc1)
-                    self.update_graph('altitude', current_time, yukseklik1)
-                    self.update_graph('descent_speed', current_time, inis_hizi)
-                    self.update_graph('temperature', current_time, sicaklik)
-                    self.update_graph('altitude_diff', current_time, irtifa_farki)
-                    avg_iot_temp = (iot_s1_data + iot_s2_data) / 2
-                    self.update_graph('iot_temp', current_time, avg_iot_temp)
+                    self.update_graph('pressure', current_time, basinc1, basinc2)  # Çift çizgi: Yük ve Taşıyıcı basınç
+                    self.update_graph('altitude', current_time, yukseklik1, yukseklik2)  # Çift çizgi: Yük ve Taşıyıcı yükseklik
+                    self.update_graph('descent_speed', current_time, inis_hizi)  # Tek çizgi
+                    self.update_graph('temperature', current_time, sicaklik)  # Tek çizgi
+                    self.update_graph('altitude_diff', current_time, irtifa_farki)  # Tek çizgi
+                    self.update_graph('iot_temp', current_time, iot_s1_data, iot_s2_data)  # Çift çizgi: IoT1 ve IoT2
                     
                     # Update status displays
                     battery_percent = int((pil_gerilimi - 3.0) / 1.0 * 100)
