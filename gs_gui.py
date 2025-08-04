@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QGroupBox, QTableWidget, QTableWidgetItem, QMessageBox
 )
 from PyQt6.QtCore import QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QPixmap, QPalette, QColor
+from PyQt6.QtGui import QFont, QPixmap, QPalette, QColor, QImage
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from OpenGL.GL import *
 from OpenGL.GLU import *
@@ -28,6 +28,126 @@ import pyqtgraph as pg
 import numpy as np
 import serial
 import serial.tools.list_ports
+import cv2
+
+
+class CameraWidget(QLabel):
+    """USB Kamera Widget Sınıfı"""
+    
+    def __init__(self):
+        super().__init__()
+        self.camera = None
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_frame)
+        self.camera_index = -1
+        
+        # Placeholder ayarları
+        self.setText("Kamera Aranıyor...")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet("""
+            QLabel {
+                background-color: #e9ecef;
+                color: #6c757d;
+                border: 2px dashed #ced4da;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 500;
+            }
+        """)
+        self.setMinimumSize(200, 150)
+        self.setScaledContents(True)
+        
+        # Kamera arama
+        self.find_usb_camera()
+        
+    def find_usb_camera(self):
+        """USB video yakalama cihazını otomatik olarak bul"""
+        # Birden fazla kamera indexini dene (0-10 arası)
+        for index in range(11):
+            cap = cv2.VideoCapture(index)
+            if cap.isOpened():
+                # Kamera özelliklerini kontrol et
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    self.camera_index = index
+                    self.camera = cap
+                    self.setText(f"Kamera Bulundu (Index: {index})")
+                    print(f"USB Kamera bulundu: Index {index}")
+                    break
+                cap.release()
+        
+        if self.camera_index == -1:
+            self.setText("USB Kamera\nBulunamadı")
+            print("USB video yakalama cihazı bulunamadı")
+        else:
+            self.start_camera()
+    
+    def start_camera(self):
+        """Kamera görüntü akışını başlat"""
+        if self.camera and self.camera.isOpened():
+            # Kamera çözünürlüğünü ayarla
+            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self.camera.set(cv2.CAP_PROP_FPS, 30)
+            
+            # Timer'ı başlat (30 FPS için ~33ms)
+            self.timer.start(33)
+            print(f"Kamera başlatıldı: {self.camera_index}")
+    
+    def update_frame(self):
+        """Kamera frame'ini güncelle"""
+        if self.camera and self.camera.isOpened():
+            ret, frame = self.camera.read()
+            if ret and frame is not None:
+                # Frame'i QLabel boyutuna uygun şekilde yeniden boyutlandır
+                height, width, channel = frame.shape
+                bytes_per_line = 3 * width
+                
+                # BGR'den RGB'ye çevir (OpenCV BGR kullanır, Qt RGB kullanır)
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                
+                # QImage oluştur
+                q_image = QImage(rgb_frame.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
+                
+                # QPixmap'e çevir ve label'a ata
+                pixmap = QPixmap.fromImage(q_image)
+                
+                # Widget boyutuna göre ölçekle (aspect ratio korunarak)
+                scaled_pixmap = pixmap.scaled(
+                    self.size(), 
+                    Qt.AspectRatioMode.KeepAspectRatio, 
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                
+                self.setPixmap(scaled_pixmap)
+            else:
+                # Frame okunamıyorsa bağlantıyı yeniden dene
+                self.reconnect_camera()
+    
+    def reconnect_camera(self):
+        """Kamera bağlantısını yeniden kur"""
+        if self.camera:
+            self.camera.release()
+        
+        # Kısa bir beklemeden sonra yeniden bağlanmayı dene
+        QTimer.singleShot(1000, self.find_usb_camera)
+    
+    def stop_camera(self):
+        """Kamera akışını durdur"""
+        if self.timer.isActive():
+            self.timer.stop()
+        
+        if self.camera:
+            self.camera.release()
+            self.camera = None
+        
+        self.setText("Kamera\nDurduruldu")
+        print("Kamera durduruldu")
+    
+    def closeEvent(self, event):
+        """Widget kapatılırken kamerayı temizle"""
+        self.stop_camera()
+        super().closeEvent(event)
 
 
 class SatelliteModel3D(QOpenGLWidget):
@@ -249,7 +369,7 @@ class TelemetryData:
     def __init__(self):
         self.paket_sayisi = 0
         self.uydu_statusu = 0
-        self.hata_kodu = "00000"
+        self.hata_kodu = "22222"  # Başlangıçta tüm sistemler beklemede (2=sarı)
         self.basinc1 = 101325.0
         self.basinc2 = 101300.0
         self.yukseklik1 = 150.5
@@ -257,7 +377,7 @@ class TelemetryData:
         self.irtifa_farki = 0.7
         self.inis_hizi = -2.3
         self.sicaklik = 25.4
-        self.pil_gerilimi = 3.7
+        self.pil_gerilimi = 0.0  # Default 0V
         self.pitch = 15.2
         self.roll = 8.7
         self.yaw = 180.5
@@ -301,9 +421,15 @@ class GroundStationGUI(QMainWindow):
         self.is_listening = False
         self.listen_thread = None
         
+        # Camera variable
+        self.camera_widget = None
+        
         self.init_ui()
         self.setup_timers()
         self.refresh_com_ports()
+        
+        # Başlangıç hata kodu tablosunu güncelle
+        self.update_error_display()
         
     def init_ui(self):
         """UI kurulumu"""
@@ -316,6 +442,8 @@ class GroundStationGUI(QMainWindow):
         
         # Ana layout (yatay)
         main_layout = QHBoxLayout(central_widget)
+        main_layout.setSpacing(5)  # Section'lar arası boşluk azaltıldı
+        main_layout.setContentsMargins(5, 5, 5, 5)  # Kenar boşlukları azaltıldı
         
         # Sol panel (grafikler + log)
         left_panel = self.create_left_panel()
@@ -324,13 +452,15 @@ class GroundStationGUI(QMainWindow):
         right_panel = self.create_right_panel()
         
         # Panelleri ana layout'a ekle
-        main_layout.addWidget(left_panel, 3)  # Sol panel için oran
+        main_layout.addWidget(left_panel, 2)  # Sol panel için oran
         main_layout.addWidget(right_panel, 2)  # Sağ panel için oran
         
     def create_left_panel(self):
         """Sol panel oluşturma (Grafikler + Log)"""
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
+        left_layout.setSpacing(3)  # Grafik ve log arası boşluk azaltıldı
+        left_layout.setContentsMargins(3, 3, 3, 3)  # Kenar boşlukları azaltıldı
         
         # Grafikler bölümü (3x2 grid)
         graphs_group = QGroupBox("Telemetri Grafikleri")
@@ -430,6 +560,8 @@ class GroundStationGUI(QMainWindow):
         """Sağ panel oluşturma"""
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
+        right_layout.setSpacing(3)  # Section'lar arası boşluk azaltıldı
+        right_layout.setContentsMargins(3, 3, 3, 3)  # Kenar boşlukları azaltıldı
         
         # Üst: Kamera ve Harita
         top_section = self.create_camera_map_section()
@@ -438,10 +570,10 @@ class GroundStationGUI(QMainWindow):
         middle_section = self.create_data_3d_section()
         
         # Alt: COM ve Logo
-        bottom_section = self.create_com_logo_section()
+        bottom_section = self.create_com_textdata_section()
         
-        right_layout.addWidget(top_section, 2)
-        right_layout.addWidget(middle_section, 3)
+        right_layout.addWidget(top_section, 4)
+        right_layout.addWidget(middle_section, 2)
         right_layout.addWidget(bottom_section, 1)
         
         return right_widget
@@ -450,24 +582,16 @@ class GroundStationGUI(QMainWindow):
         """Kamera ve Harita bölümü"""
         section_widget = QWidget()
         section_layout = QHBoxLayout(section_widget)
+        section_layout.setSpacing(3)  # Kamera ve harita arası boşluk azaltıldı
+        section_layout.setContentsMargins(3, 3, 3, 3)  # Kenar boşlukları azaltıldı
         
-        # Kamera placeholder
+        # Kamera bölümü - Gerçek USB kamera
         camera_group = QGroupBox("Kamera")
         camera_layout = QVBoxLayout(camera_group)
-        camera_placeholder = QLabel("Kamera Görüntüsü\n(Placeholder)")
-        camera_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        camera_placeholder.setStyleSheet("""
-            QLabel {
-                background-color: #e9ecef;
-                color: #6c757d;
-                border: 2px dashed #ced4da;
-                border-radius: 8px;
-                font-size: 14px;
-                font-weight: 500;
-            }
-        """)
-        camera_placeholder.setMinimumSize(200, 150)
-        camera_layout.addWidget(camera_placeholder)
+        
+        # Gerçek kamera widget'ı oluştur
+        self.camera_widget = CameraWidget()
+        camera_layout.addWidget(self.camera_widget)
         
         # Harita placeholder
         map_group = QGroupBox("Harita")
@@ -496,6 +620,8 @@ class GroundStationGUI(QMainWindow):
         """Data ve 3D Model bölümü"""
         section_widget = QWidget()
         section_layout = QHBoxLayout(section_widget)
+        section_layout.setSpacing(3)  # Data ve 3D model arası boşluk azaltıldı
+        section_layout.setContentsMargins(3, 3, 3, 3)  # Kenar boşlukları azaltıldı
         
         # Data paneli
         data_panel = self.create_data_panel()
@@ -526,10 +652,10 @@ class GroundStationGUI(QMainWindow):
         self.rhrh_combos = []
         for i in range(4):
             combo = QComboBox()
-            if i % 2 == 0:  # Rakam
+            if i % 2 == 0:  # Harf (0. ve 2. index)
+                combo.addItems(['m', 'f', 'n', 'r', 'g', 'b', 'p', 'y', 'c'])
+            else:  # Rakam (1. ve 3. index)
                 combo.addItems([str(x) for x in range(21)])  # 0-20 arası sayılar
-            else:  # Harf
-                combo.addItems(['M', 'F', 'N', 'R', 'G', 'B', 'P', 'Y', 'C'])
             self.rhrh_combos.append(combo)
             combo_layout.addWidget(combo)
         
@@ -540,59 +666,54 @@ class GroundStationGUI(QMainWindow):
         telecommand_layout.addLayout(combo_layout)
         telecommand_layout.addWidget(self.telecommand_btn)
         
-        # Hata kodu tablosu
+        # Hata kodu tablosu - QLabel ile HTML table
         error_group = QGroupBox("Hata Kodu")
         error_layout = QVBoxLayout(error_group)
         
-        self.error_table = QTableWidget(2, 6)
-        self.error_table.setMaximumHeight(80)
+        # HTML table olarak hata kodu tablosu
+        self.error_table_label = QLabel()
+        self.error_table_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.error_table_label.setMinimumHeight(70)
+        self.error_table_label.setMaximumHeight(70)
         
-        # Hücre boyutlarını minimuma ayarla
-        self.error_table.horizontalHeader().setVisible(False)
-        self.error_table.verticalHeader().setVisible(False)
-        self.error_table.setColumnWidth(0, 30)
-        self.error_table.setColumnWidth(1, 30)
-        self.error_table.setColumnWidth(2, 30)
-        self.error_table.setColumnWidth(3, 30)
-        self.error_table.setColumnWidth(4, 30)
-        self.error_table.setColumnWidth(5, 30)
-        self.error_table.setRowHeight(0, 25)
-        self.error_table.setRowHeight(1, 25)
+        # Test amaçlı HTML tablosu - tüm hücreler sarı
+        html_table = """
+        <div style="display: flex; justify-content: center; align-items: center; height: 100%;">
+            <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; border: 1px solid #333;">
+                <tr>
+                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 1 &nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 2 &nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 3 &nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 4 &nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 5 &nbsp;</td>
+                </tr>
+                <tr>
+                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
+                </tr>
+            </table>
+        </div>
+        """
         
-        # Üst satır (başlıklar)
-        for i in range(6):
-            item = QTableWidgetItem(str(i+1))
-            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.error_table.setItem(0, i, item)
-            
-        # Alt satır (durum)
-        for i in range(6):
-            item = QTableWidgetItem("")
-            if i < 5:  # İlk 5 hata kodu biti
-                item.setBackground(QColor("green"))
-            else:
-                item.setBackground(QColor("red"))
-            self.error_table.setItem(1, i, item)
-            
-        error_layout.addWidget(self.error_table)
+        self.error_table_label.setText(html_table)
+        self.error_table_label.setStyleSheet("border: 1px solid #ced4da; border-radius: 4px; background-color: white;")
         
-        # Durum metinleri
-        self.status_label1 = QLabel("Pil Gerilimi: 3.7V (74%)")
-        self.status_label1.setStyleSheet("font-weight: 500; color: #495057; font-size: 13px;")
-        self.status_label2 = QLabel("Statü: 0 (Uçuşa Hazır)")
-        self.status_label2.setStyleSheet("font-weight: 500; color: #198754; font-size: 13px;")
+        error_layout.addWidget(self.error_table_label)
         
         data_layout.addWidget(telecommand_group)
         data_layout.addWidget(error_group)
-        data_layout.addWidget(self.status_label1)
-        data_layout.addWidget(self.status_label2)
         
         return data_group
         
-    def create_com_logo_section(self):
-        """COM ve Logo bölümü"""
+    def create_com_textdata_section(self):
+        """COM ve YIS Logo & Text Data bölümü"""
         section_widget = QWidget()
         section_layout = QHBoxLayout(section_widget)
+        section_layout.setSpacing(3)  # COM ve logo arası boşluk azaltıldı
+        section_layout.setContentsMargins(3, 3, 3, 3)  # Kenar boşlukları azaltıldı
         
         # COM Kontrol paneli
         com_group = QGroupBox("Haberleşme Kontrolü")
@@ -609,7 +730,8 @@ class GroundStationGUI(QMainWindow):
         
         # Refresh button
         self.refresh_btn = QPushButton("Yenile")
-        self.refresh_btn.setMaximumWidth(80)
+        self.refresh_btn.setMaximumWidth(60)
+        self.refresh_btn.setMaximumHeight(24)
         self.refresh_btn.clicked.connect(self.refresh_com_ports)
         
         # Baud Rate
@@ -627,9 +749,11 @@ class GroundStationGUI(QMainWindow):
                 background-color: #198754;
                 color: white;
                 font-weight: bold;
-                padding: 8px 16px;
-                border-radius: 6px;
+                padding: 4px 12px;
+                border-radius: 4px;
                 border: none;
+                font-size: 12px;
+                max-height: 28px;
             }
             QPushButton:hover {
                 background-color: #157347;
@@ -647,9 +771,11 @@ class GroundStationGUI(QMainWindow):
                 background-color: #dc3545;
                 color: white;
                 font-weight: bold;
-                padding: 8px 16px;
-                border-radius: 6px;
+                padding: 4px 12px;
+                border-radius: 4px;
                 border: none;
+                font-size: 12px;
+                max-height: 28px;
             }
             QPushButton:hover:enabled {
                 background-color: #c82333;
@@ -688,10 +814,11 @@ class GroundStationGUI(QMainWindow):
                 background-color: #dc3545;
                 color: white;
                 font-weight: bold;
-                padding: 10px 20px;
-                border-radius: 6px;
+                padding: 6px 16px;
+                border-radius: 4px;
                 border: none;
-                font-size: 14px;
+                font-size: 12px;
+                max-height: 32px;
             }
             QPushButton:hover {
                 background-color: #c82333;
@@ -707,7 +834,24 @@ class GroundStationGUI(QMainWindow):
         com_layout.addWidget(self.connection_status)
         com_layout.addWidget(self.manual_separation_btn)
         
-        # Logo bölümü
+        # YIS Logo ve Text Data bölümü
+        logo_textdata_group = QGroupBox("YIS Logo ve Text Data")
+        logo_textdata_layout = QVBoxLayout(logo_textdata_group)
+        
+        # Text Data sub-section
+        textdata_group = QGroupBox("Text Data")
+        textdata_layout = QVBoxLayout(textdata_group)
+        
+        # Durum metinleri (buraya taşındı)
+        self.status_label1 = QLabel("Pil Gerilimi: 0.0V (--%)")  # Default 0V
+        self.status_label1.setStyleSheet("font-weight: 500; color: #495057; font-size: 13px;")
+        self.status_label2 = QLabel("Statü: 0 (Uçuşa Hazır)")  # Default 0
+        self.status_label2.setStyleSheet("font-weight: 500; color: #198754; font-size: 13px;")
+        
+        textdata_layout.addWidget(self.status_label1)
+        textdata_layout.addWidget(self.status_label2)
+        
+        # Logo sub-section
         logo_group = QGroupBox("YIS Logo")
         logo_layout = QVBoxLayout(logo_group)
         
@@ -734,8 +878,12 @@ class GroundStationGUI(QMainWindow):
         self.logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         logo_layout.addWidget(self.logo_label)
         
-        section_layout.addWidget(com_group)
-        section_layout.addWidget(logo_group)
+        # Text Data ve Logo'yu birleştir
+        logo_textdata_layout.addWidget(textdata_group, 1)  # Text Data üstte, 1 birim
+        logo_textdata_layout.addWidget(logo_group, 2)      # Logo altta, 2 birim
+        
+        section_layout.addWidget(com_group, 2)  # Haberleşme kontrolü
+        section_layout.addWidget(logo_textdata_group, 2)  # Logo ve Text Data bölümü
         
         return section_widget
         
@@ -797,14 +945,44 @@ class GroundStationGUI(QMainWindow):
         )
         
     def update_error_display(self):
-        """Hata kodu tablosunu güncelleme"""
+        """Hata kodu tablosunu güncelleme - HTML tablosu ile"""
         error_code = self.telemetry_data.hata_kodu
-        for i in range(min(5, len(error_code))):
-            item = self.error_table.item(1, i)
-            if error_code[i] == '0':
-                item.setBackground(QColor("green"))
+        
+        # HTML tablosu oluştur - ortalı ve çerçeveli
+        html_table = '<div style="display: flex; justify-content: center; align-items: center; height: 100%;"><table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; border: 1px solid #333;">'
+        
+        # Üst satır (başlıklar)
+        html_table += '<tr>'
+        for i in range(5):
+            html_table += f'<td style="background-color: lightgray; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; font-weight: bold; border: 1px solid #333; padding: 8px;">&nbsp; {i+1} &nbsp;</td>'
+        html_table += '</tr>'
+        
+        # Alt satır (durum renkleri)
+        html_table += '<tr>'
+        for i in range(5):
+            # Renk belirleme
+            if error_code == "22222":
+                # Default durum - veri alınmıyor, tüm hücreler sarı
+                color = "yellow"
             else:
-                item.setBackground(QColor("red"))
+                # Gerçek veri alınıyor - hata koduna göre renklendirme
+                if len(error_code) >= 5 and i < len(error_code):
+                    if error_code[i] == '0':
+                        color = "red"      # 0 = hata var (kırmızı)
+                    elif error_code[i] == '1':
+                        color = "lime"     # 1 = normal (yeşil)
+                    else:
+                        color = "yellow"   # Geçersiz değer (sarı)
+                else:
+                    color = "yellow"       # Veri eksik (sarı)
+            
+            html_table += f'<td style="background-color: {color}; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>'
+        
+        html_table += '</tr>'
+        html_table += '</table></div>'
+        
+        # HTML tablosunu label'a ata
+        self.error_table_label.setText(html_table)
                 
     def send_telecommand(self):
         """Telekomut gönderme"""
@@ -951,6 +1129,8 @@ class GroundStationGUI(QMainWindow):
                 try:
                     # Parse the telemetry values (indexes shifted by -1 since TEL, is removed)
                     paket_sayisi = int(parts[0])
+                    uydu_statusu = int(parts[1])
+                    hata_kodu = parts[2]
                     basinc1 = float(parts[4])
                     basinc2 = float(parts[5])
                     yukseklik1 = float(parts[6])
@@ -967,6 +1147,8 @@ class GroundStationGUI(QMainWindow):
                     
                     # Update telemetry data
                     self.telemetry_data.paket_sayisi = paket_sayisi
+                    self.telemetry_data.uydu_statusu = uydu_statusu
+                    self.telemetry_data.hata_kodu = hata_kodu
                     self.telemetry_data.basinc1 = basinc1
                     self.telemetry_data.basinc2 = basinc2
                     self.telemetry_data.yukseklik1 = yukseklik1
@@ -993,8 +1175,29 @@ class GroundStationGUI(QMainWindow):
                     self.update_graph('iot_temp', current_time, iot_s1_data, iot_s2_data)  # Çift çizgi: IoT1 ve IoT2
                     
                     # Update status displays
-                    battery_percent = int((pil_gerilimi - 3.0) / 1.0 * 100)
-                    self.status_label1.setText(f"Pil Gerilimi: {pil_gerilimi:.1f}V ({battery_percent}%)")
+                    # Pil gerilimi: 4.2V ile 3.3V arasında yüzde hesapla
+                    if pil_gerilimi <= 0:
+                        # 0V veya negatif değerler için özel durum
+                        self.status_label1.setText("Pil Gerilimi: 0.0V (--%)") 
+                    else:
+                        battery_percent = int((pil_gerilimi - 3.3) / (4.2 - 3.3) * 100)
+                        battery_percent = max(0, min(100, battery_percent))  # 0-100 arası sınırla
+                        self.status_label1.setText(f"Pil Gerilimi: {pil_gerilimi:.1f}V ({battery_percent}%)")
+                    
+                    # Uydu statusu metni
+                    status_texts = {
+                        0: "Uçuşa Hazır",
+                        1: "Yükselme", 
+                        2: "Model Uydu İniş",
+                        3: "Ayrılma",
+                        4: "Görev Yükü İniş",
+                        5: "Kurtarma"
+                    }
+                    status_text = status_texts.get(uydu_statusu, f"Bilinmeyen ({uydu_statusu})")
+                    self.status_label2.setText(f"Statü: {uydu_statusu} ({status_text})")
+                    
+                    # Hata kodu tablosunu güncelle
+                    self.update_error_display()
                     
                     return True
                 except ValueError as ve:
@@ -1043,6 +1246,11 @@ class GroundStationGUI(QMainWindow):
         """Uygulama kapatılırken çağrılan fonksiyon"""
         if self.is_listening:
             self.stop_listening()
+        
+        # Kamerayı kapat
+        if self.camera_widget:
+            self.camera_widget.stop_camera()
+        
         event.accept()
 
 
@@ -1089,8 +1297,14 @@ def main():
             font-weight: bold;
             border: 2px solid #dee2e6;
             border-radius: 8px;
-            margin-top: 1ex;
-            padding-top: 10px;
+            margin-top: 0.5ex;
+            margin-bottom: 0.5ex;
+            margin-left: 1px;
+            margin-right: 1px;
+            padding-top: 8px;
+            padding-bottom: 4px;
+            padding-left: 4px;
+            padding-right: 4px;
             background-color: #ffffff;
         }
         
