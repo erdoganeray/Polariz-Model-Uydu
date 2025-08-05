@@ -2,8 +2,8 @@
 #include <LoRa_E22.h>
 #include "../binary_protocol.h"
 
-#define LORA_M0 19
-#define LORA_M1 18
+#define LORA_M0 13
+#define LORA_M1 12
 #define LORA_AUX 4
 #define LORA_TX 16
 #define LORA_RX 17
@@ -186,9 +186,9 @@ void loop() {
         int minute = (timestamp % 3600) / 60;
         int second = timestamp % 60;
         
-        // Hata kodunu binary string'e çevir
+        // Hata kodunu binary string'e çevir (6 bit)
         String hata_kodu_str = "";
-        for(int i = 4; i >= 0; i--) {
+        for(int i = 5; i >= 0; i--) {
           hata_kodu_str += ((telemetry->hata_kodu >> i) & 1) ? "1" : "0";
         }
         

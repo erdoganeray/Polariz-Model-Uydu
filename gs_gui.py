@@ -369,7 +369,7 @@ class TelemetryData:
     def __init__(self):
         self.paket_sayisi = 0
         self.uydu_statusu = 0
-        self.hata_kodu = "22222"  # Başlangıçta tüm sistemler beklemede (2=sarı)
+        self.hata_kodu = "222222"  # Başlangıçta tüm sistemler beklemede (2=sarı)
         self.basinc1 = 101325.0
         self.basinc2 = 101300.0
         self.yukseklik1 = 150.5
@@ -681,18 +681,20 @@ class GroundStationGUI(QMainWindow):
         <div style="display: flex; justify-content: center; align-items: center; height: 100%;">
             <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; border: 1px solid #333;">
                 <tr>
-                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 1 &nbsp;</td>
-                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 2 &nbsp;</td>
-                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 3 &nbsp;</td>
-                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 4 &nbsp;</td>
-                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 5 &nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 100px; max-width: 100px; width: 100px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 1 &nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 100px; max-width: 100px; width: 100px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 2 &nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 100px; max-width: 100px; width: 100px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 3 &nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 100px; max-width: 100px; width: 100px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 4 &nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 100px; max-width: 100px; width: 100px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 5 &nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 100px; max-width: 100px; width: 100px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp; 6 &nbsp;</td>
                 </tr>
                 <tr>
-                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
-                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
-                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
-                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
-                    <td style="background-color: yellow; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 100px; max-width: 100px; width: 100px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 100px; max-width: 100px; width: 100px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 100px; max-width: 100px; width: 100px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 100px; max-width: 100px; width: 100px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 100px; max-width: 100px; width: 100px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
+                    <td style="background-color: yellow; text-align: center; min-width: 100px; max-width: 100px; width: 100px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>
                 </tr>
             </table>
         </div>
@@ -953,30 +955,30 @@ class GroundStationGUI(QMainWindow):
         
         # Üst satır (başlıklar)
         html_table += '<tr>'
-        for i in range(5):
-            html_table += f'<td style="background-color: lightgray; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; font-weight: bold; border: 1px solid #333; padding: 8px;">&nbsp; {i+1} &nbsp;</td>'
+        for i in range(6):
+            html_table += f'<td style="background-color: lightgray; text-align: center; min-width: 100px; max-width: 100px; width: 100px; height: 25px; font-weight: bold; border: 1px solid #333; padding: 8px;">&nbsp; {i+1} &nbsp;</td>'
         html_table += '</tr>'
         
         # Alt satır (durum renkleri)
         html_table += '<tr>'
-        for i in range(5):
+        for i in range(6):
             # Renk belirleme
-            if error_code == "22222":
+            if error_code == "222222":
                 # Default durum - veri alınmıyor, tüm hücreler sarı
                 color = "yellow"
             else:
                 # Gerçek veri alınıyor - hata koduna göre renklendirme
-                if len(error_code) >= 5 and i < len(error_code):
+                if len(error_code) >= 6 and i < len(error_code):
                     if error_code[i] == '0':
-                        color = "red"      # 0 = hata var (kırmızı)
+                        color = "lime"     # 0 = normal (yeşil)
                     elif error_code[i] == '1':
-                        color = "lime"     # 1 = normal (yeşil)
+                        color = "red"      # 1 = hata var (kırmızı)
                     else:
                         color = "yellow"   # Geçersiz değer (sarı)
                 else:
                     color = "yellow"       # Veri eksik (sarı)
             
-            html_table += f'<td style="background-color: {color}; text-align: center; min-width: 120px; max-width: 120px; width: 120px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>'
+            html_table += f'<td style="background-color: {color}; text-align: center; min-width: 100px; max-width: 100px; width: 100px; height: 25px; border: 1px solid #333; padding: 8px;">&nbsp;</td>'
         
         html_table += '</tr>'
         html_table += '</table></div>'

@@ -19,7 +19,7 @@ struct __attribute__((packed)) TelemetryPacket {
     uint8_t packet_type;           // 1 byte - paket tipi
     uint16_t paket_sayisi;         // 2 byte - paket sayısı
     uint8_t uydu_statusu;          // 1 byte - uydu durumu
-    uint8_t hata_kodu;             // 1 byte - 5 bitlik hata kodu (00000-11111)
+    uint8_t hata_kodu;             // 1 byte - 6 bitlik hata kodu (000000-111111)
     uint32_t gonderme_saati;       // 4 byte - Unix timestamp
     float basinc1;                 // 4 byte - Pascal
     float basinc2;                 // 4 byte - Pascal
