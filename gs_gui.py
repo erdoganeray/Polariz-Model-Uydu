@@ -847,12 +847,43 @@ class GroundStationGUI(QMainWindow):
             }
         """)
         self.manual_separation_btn.clicked.connect(self.manual_separation)
+
+        # Manuel birleşme butonu
+        self.manual_reunion_btn = QPushButton("Manuel Birleşme")
+        self.manual_reunion_btn.setMinimumHeight(32)  # Consistent height
+        self.manual_reunion_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                font-weight: bold;
+                padding: 6px 16px;
+                border-radius: 4px;
+                border: none;
+                font-size: 12px;
+                min-height: 30px;
+            }
+            QPushButton:hover {
+                background-color: #218838;
+            }
+            QPushButton:pressed {
+                background-color: #1e7e34;
+            }
+        """)
+        self.manual_reunion_btn.clicked.connect(self.manual_reunion)
+        
+        # Manuel komut butonları için frame
+        manual_buttons_frame = QWidget()
+        manual_buttons_layout = QHBoxLayout(manual_buttons_frame)
+        manual_buttons_layout.setSpacing(8)
+        manual_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        manual_buttons_layout.addWidget(self.manual_separation_btn)
+        manual_buttons_layout.addWidget(self.manual_reunion_btn)
         
         # Haberleşme alt bölümünü doldur
         com_layout.addWidget(com_frame)
         com_layout.addWidget(control_frame)
         com_layout.addWidget(self.connection_status)
-        com_layout.addWidget(self.manual_separation_btn)
+        com_layout.addWidget(manual_buttons_frame)
         
         # YIS Logo ve Text Data bölümü
         logo_textdata_group = QGroupBox("YIS Logo ve Text Data")
@@ -1324,6 +1355,26 @@ class GroundStationGUI(QMainWindow):
                 self.add_log_message("SEND komutu LoRa'ya gönderildi (Manuel ayrılma tetikleyicisi)")
             except serial.SerialException as e:
                 self.add_log_message(f"Manuel ayrılma komutu gönderme hatası: {str(e)}")
+        else:
+            self.add_log_message("UYARI: COM bağlantısı yok, komut gönderilemedi!")
+    
+    def manual_reunion(self):
+        """Manuel birleşme komutu"""
+        self.add_log_message("UYARI: Manuel birleşme komutu gönderildi!")
+        
+        # Serial bağlantı varsa manuel birleşme komutunu gönder
+        if self.is_listening and self.serial_connection:
+            try:
+                # Manuel birleşme değerini 2 yap (yeni komut)
+                self.serial_connection.write(b'MANUEL_BIRLESME\n')
+                self.add_log_message("Manuel birleşme komutu LoRa'ya gönderildi")
+                
+                # Kısa bir bekleme sonra SEND komutunu gönder
+                time.sleep(0.1)
+                self.serial_connection.write(b'SEND\n')
+                self.add_log_message("SEND komutu LoRa'ya gönderildi (Manuel birleşme tetikleyicisi)")
+            except serial.SerialException as e:
+                self.add_log_message(f"Manuel birleşme komutu gönderme hatası: {str(e)}")
         else:
             self.add_log_message("UYARI: COM bağlantısı yok, komut gönderilemedi!")
         

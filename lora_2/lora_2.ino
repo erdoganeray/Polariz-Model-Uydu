@@ -57,12 +57,13 @@ void setup() {
   Serial.println("Komutlar:");
   Serial.println("  'SEND' - 5 kere button control gonder");
   Serial.println("  'RHRH:XXXX' - RHRH degerini guncelle (ornek: RHRH:5C9D)");
-  Serial.println("  'MANUEL_AYRILMA' - Manuel ayrilma true yap");
-  Serial.println("  'RESET_MANUEL' - Manuel ayrilma false yap");
+  Serial.println("  'MANUEL_AYRILMA' - Manuel ayrilma degerini 1 yap");
+  Serial.println("  'MANUEL_BIRLESME' - Manuel birlesme degerini 2 yap");
+  Serial.println("  'RESET_MANUEL' - Manuel degeri 0'a sifirla");
   Serial.println();
   Serial.println("Baslangic degerleri:");
   Serial.println("  RHRH: 0000");
-  Serial.println("  Manuel Ayrilma: false");
+  Serial.println("  Manuel Durum: 0 (normal)");
   Serial.println();
   printModuleInfo();
   printConfig();
@@ -90,8 +91,16 @@ void sendButtonControlToLora1() {
   Serial.print(paket_sayisi);
   Serial.print(", RHRH: ");
   Serial.print(rhrh_str);
-  Serial.print(", Manuel Ayrilma: ");
-  Serial.print(manuel_ayrilma_degeri ? "true" : "false");
+  Serial.print(", Manuel Durum: ");
+  if (manuel_ayrilma_degeri == 0) {
+    Serial.print("normal");
+  } else if (manuel_ayrilma_degeri == 1) {
+    Serial.print("ayrilma");
+  } else if (manuel_ayrilma_degeri == 2) {
+    Serial.print("birlesme");
+  } else {
+    Serial.print(manuel_ayrilma_degeri);
+  }
   Serial.print(", Status: ");
   Serial.println(rs.getResponseDescription());
   
@@ -134,6 +143,11 @@ void loop() {
       manuel_ayrilma_degeri = 1; // true yap
       Serial.println("Manuel ayrilma degeri true olarak ayarlandi");
     }
+    else if (command.equalsIgnoreCase("MANUEL_BIRLESME")) {
+      // Manuel birleşme komutunu işle
+      manuel_ayrilma_degeri = 2; // birleşme değeri
+      Serial.println("Manuel birlesme degeri 2 olarak ayarlandi");
+    }
     else if (command.equalsIgnoreCase("RESET_MANUEL")) {
       // Manuel ayrılma değerini sıfırla
       manuel_ayrilma_degeri = 0; // false yap
@@ -156,6 +170,11 @@ void loop() {
         if (manuel_ayrilma_degeri == 1) {
           manuel_ayrilma_degeri = 0;
           Serial.println("Manuel ayrilma degeri otomatik olarak false'a sifirlandi.");
+        }
+        // Eğer manuel birleşme aktifse, gönderim sonrası sıfırla  
+        else if (manuel_ayrilma_degeri == 2) {
+          manuel_ayrilma_degeri = 0;
+          Serial.println("Manuel birleme degeri otomatik olarak false'a sifirlandi.");
         }
       }
     }
