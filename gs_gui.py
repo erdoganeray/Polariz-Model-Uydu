@@ -424,12 +424,22 @@ class GroundStationGUI(QMainWindow):
         # Camera variable
         self.camera_widget = None
         
+        # İstatistik takibi için değişkenler
+        self.first_packet_number = None  # İlk gelen paket numarası
+        self.last_packet_number = 0     # Son gelen paket numarası
+        self.total_received_packets = 0  # Alınan toplam paket sayısı
+        self.communication_started = False  # Haberleşme başladı mı?
+        self.communication_start_time = None  # Haberleşme başlangıç zamanı
+        
         self.init_ui()
         self.setup_timers()
         self.refresh_com_ports()
         
         # Başlangıç hata kodu tablosunu güncelle
         self.update_error_display()
+        
+        # Başlangıç istatistiklerini güncelle
+        self.update_statistics_display()
         
     def init_ui(self):
         """UI kurulumu"""
@@ -652,10 +662,10 @@ class GroundStationGUI(QMainWindow):
         self.rhrh_combos = []
         for i in range(4):
             combo = QComboBox()
-            if i % 2 == 0:  # Harf (0. ve 2. index)
-                combo.addItems(['m', 'f', 'n', 'r', 'g', 'b', 'p', 'y', 'c'])
-            else:  # Rakam (1. ve 3. index)
+            if i % 2 == 0:  # Rakam (0. ve 2. index)
                 combo.addItems([str(x) for x in range(21)])  # 0-20 arası sayılar
+            else:  # Harf (1. ve 3. index)
+                combo.addItems(['M', 'F', 'N', 'R', 'G', 'B', 'P', 'Y', 'C'])  # Büyük harfler
             self.rhrh_combos.append(combo)
             combo_layout.addWidget(combo)
         
@@ -724,16 +734,19 @@ class GroundStationGUI(QMainWindow):
         # COM Port Selection Frame
         com_frame = QWidget()
         com_frame_layout = QGridLayout(com_frame)
+        com_frame_layout.setSpacing(5)  # Grid elementleri arası boşluk
         
         # COM Port
         com_label = QLabel("COM Port:")
         self.com_combo = QComboBox()
         self.com_combo.setMinimumWidth(120)
+        self.com_combo.setMinimumHeight(26)  # Minimum yükseklik
         
         # Refresh button
         self.refresh_btn = QPushButton("Yenile")
         self.refresh_btn.setMaximumWidth(60)
-        self.refresh_btn.setMaximumHeight(24)
+        self.refresh_btn.setMinimumHeight(26)  # Consistent height
+        self.refresh_btn.setMaximumHeight(26)
         self.refresh_btn.clicked.connect(self.refresh_com_ports)
         
         # Baud Rate
@@ -742,6 +755,7 @@ class GroundStationGUI(QMainWindow):
         self.baud_combo.addItems(['9600', '115200', '230400'])
         self.baud_combo.setCurrentText('115200')
         self.baud_combo.setMaximumWidth(100)
+        self.baud_combo.setMinimumHeight(26)  # Minimum yükseklik
         
         # Control Buttons
         self.start_btn = QPushButton("Başlat")
@@ -789,9 +803,7 @@ class GroundStationGUI(QMainWindow):
                 background-color: #6c757d;
             }
         """)
-        
 
-        
         # Layout arrangement
         com_frame_layout.addWidget(com_label, 0, 0)
         com_frame_layout.addWidget(self.com_combo, 0, 1)
@@ -800,17 +812,22 @@ class GroundStationGUI(QMainWindow):
         com_frame_layout.addWidget(baud_label, 1, 0)
         com_frame_layout.addWidget(self.baud_combo, 1, 1)
         
+        # Control buttons frame
         control_frame = QWidget()
         control_layout = QHBoxLayout(control_frame)
+        control_layout.setSpacing(8)  # Butonlar arası boşluk
+        control_layout.setContentsMargins(0, 5, 0, 5)  # Üst-alt boşluk
         control_layout.addWidget(self.start_btn)
         control_layout.addWidget(self.stop_btn)
         
         # Connection status
         self.connection_status = QLabel("Durum: Bağlantı bekleniyor")
         self.connection_status.setStyleSheet("font-weight: 500; color: #6c757d; font-size: 12px;")
+        self.connection_status.setMinimumHeight(20)  # Minimum yükseklik
         
         # Manuel ayrılma butonu
         self.manual_separation_btn = QPushButton("Manuel Ayrılma")
+        self.manual_separation_btn.setMinimumHeight(32)  # Consistent height
         self.manual_separation_btn.setStyleSheet("""
             QPushButton {
                 background-color: #dc3545;
@@ -820,7 +837,7 @@ class GroundStationGUI(QMainWindow):
                 border-radius: 4px;
                 border: none;
                 font-size: 12px;
-                max-height: 32px;
+                min-height: 30px;
             }
             QPushButton:hover {
                 background-color: #c82333;
@@ -831,6 +848,7 @@ class GroundStationGUI(QMainWindow):
         """)
         self.manual_separation_btn.clicked.connect(self.manual_separation)
         
+        # Haberleşme alt bölümünü doldur
         com_layout.addWidget(com_frame)
         com_layout.addWidget(control_frame)
         com_layout.addWidget(self.connection_status)
@@ -842,16 +860,61 @@ class GroundStationGUI(QMainWindow):
         
         # Text Data sub-section
         textdata_group = QGroupBox("Text Data")
-        textdata_layout = QVBoxLayout(textdata_group)
+        textdata_layout = QHBoxLayout(textdata_group)  # Yatay layout yapıyoruz
+        textdata_layout.setSpacing(8)  # İki bölüm arası boşluk
+        textdata_layout.setContentsMargins(8, 8, 8, 8)  # İç kenar boşlukları
         
-        # Durum metinleri (buraya taşındı)
+        # Sol bölüm - Durum ve Temel Bilgiler
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setSpacing(4)  # Label'lar arası boşluk
+        left_layout.setContentsMargins(4, 4, 4, 4)  # İç kenar boşlukları
+        
+        # Sol bölüm bilgileri
         self.status_label1 = QLabel("Pil Gerilimi: 0.0V (--%)")  # Default 0V
-        self.status_label1.setStyleSheet("font-weight: 500; color: #495057; font-size: 13px;")
-        self.status_label2 = QLabel("Statü: 0 (Uçuşa Hazır)")  # Default 0
-        self.status_label2.setStyleSheet("font-weight: 500; color: #198754; font-size: 13px;")
+        self.status_label1.setStyleSheet("font-weight: 500; color: #495057; font-size: 11px; padding: 2px 0px;")
         
-        textdata_layout.addWidget(self.status_label1)
-        textdata_layout.addWidget(self.status_label2)
+        self.status_label2 = QLabel("Statü: 0 (Uçuşa Hazır)")  # Default 0
+        self.status_label2.setStyleSheet("font-weight: 500; color: #198754; font-size: 11px; padding: 2px 0px;")
+        
+        self.stats_total_expected = QLabel("Toplam Beklenen: --")
+        self.stats_total_expected.setStyleSheet("font-weight: 500; color: #495057; font-size: 11px; padding: 1px 0px;")
+        
+        self.stats_total_received = QLabel("Toplam Alınan: 0")
+        self.stats_total_received.setStyleSheet("font-weight: 500; color: #495057; font-size: 11px; padding: 1px 0px;")
+        
+        # Sol bölüm layout'ına elementleri ekle
+        left_layout.addWidget(self.status_label1)
+        left_layout.addWidget(self.status_label2)
+        left_layout.addWidget(self.stats_total_expected)
+        left_layout.addWidget(self.stats_total_received)
+        left_layout.addStretch()  # Boşluk doldurma
+        
+        # Sağ bölüm - İstatistik Sonuçları
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setSpacing(4)  # Label'lar arası boşluk
+        right_layout.setContentsMargins(4, 4, 4, 4)  # İç kenar boşlukları
+        
+        # Sağ bölüm bilgileri
+        self.stats_lost_packets = QLabel("Kayıp Paket: --")
+        self.stats_lost_packets.setStyleSheet("font-weight: 500; color: #dc3545; font-size: 11px; padding: 1px 0px;")
+        
+        self.stats_success_rate = QLabel("Başarı Oranı: --%")
+        self.stats_success_rate.setStyleSheet("font-weight: 500; color: #198754; font-size: 11px; padding: 1px 0px;")
+        
+        self.stats_data_rate = QLabel("Veri Hızı: 0.00 veri/sn")
+        self.stats_data_rate.setStyleSheet("font-weight: 500; color: #0d6efd; font-size: 11px; padding: 1px 0px;")
+        
+        # Sağ bölüm layout'ına elementleri ekle
+        right_layout.addWidget(self.stats_lost_packets)
+        right_layout.addWidget(self.stats_success_rate)
+        right_layout.addWidget(self.stats_data_rate)
+        right_layout.addStretch()  # Boşluk doldurma
+        
+        # Ana Text Data layout'ına iki bölümü ekle
+        textdata_layout.addWidget(left_widget, 1)   # Sol bölüm 1 birim
+        textdata_layout.addWidget(right_widget, 1)  # Sağ bölüm 1 birim
         
         # Logo sub-section
         logo_group = QGroupBox("YIS Logo")
@@ -881,8 +944,8 @@ class GroundStationGUI(QMainWindow):
         logo_layout.addWidget(self.logo_label)
         
         # Text Data ve Logo'yu birleştir
-        logo_textdata_layout.addWidget(textdata_group, 1)  # Text Data üstte, 1 birim
-        logo_textdata_layout.addWidget(logo_group, 2)      # Logo altta, 2 birim
+        logo_textdata_layout.addWidget(textdata_group, 2)  # Text Data üstte, 2 birim (artık daha fazla yer kaplıyor)
+        logo_textdata_layout.addWidget(logo_group, 1)      # Logo altta, 1 birim
         
         section_layout.addWidget(com_group, 2)  # Haberleşme kontrolü
         section_layout.addWidget(logo_textdata_group, 2)  # Logo ve Text Data bölümü
@@ -1048,6 +1111,14 @@ class GroundStationGUI(QMainWindow):
                 timeout=1
             )
             
+            # İstatistik değişkenlerini sıfırla
+            self.first_packet_number = None
+            self.last_packet_number = 0
+            self.total_received_packets = 0
+            self.communication_started = False
+            self.communication_start_time = None
+            self.update_statistics_display()
+            
             self.is_listening = True
             self.listen_thread = threading.Thread(target=self.listen_to_serial, daemon=True)
             self.listen_thread.start()
@@ -1072,6 +1143,13 @@ class GroundStationGUI(QMainWindow):
         
         if self.serial_connection and self.serial_connection.is_open:
             self.serial_connection.close()
+            
+        # İstatistik değişkenlerini sıfırla
+        self.first_packet_number = None
+        self.last_packet_number = 0
+        self.total_received_packets = 0
+        self.communication_started = False
+        self.update_statistics_display()
             
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
@@ -1165,6 +1243,21 @@ class GroundStationGUI(QMainWindow):
                     self.telemetry_data.iot_s1_data = iot_s1_data
                     self.telemetry_data.iot_s2_data = iot_s2_data
                     
+                    # İstatistik güncellemesi
+                    if not self.communication_started:
+                        # İlk paket geldi, istatistik takibini başlat
+                        self.first_packet_number = paket_sayisi
+                        self.communication_started = True
+                        self.communication_start_time = time.time()
+                        self.add_log_message(f"İstatistik takibi başlatıldı. İlk paket numarası: {paket_sayisi}")
+                    
+                    # Paket istatistiklerini güncelle
+                    self.last_packet_number = paket_sayisi
+                    self.total_received_packets += 1
+                    
+                    # İstatistik görüntüsünü güncelle
+                    self.update_statistics_display()
+                    
                     # Add timestamp (relative to start time)
                     current_time = time.time() - self.start_time
                     
@@ -1254,6 +1347,63 @@ class GroundStationGUI(QMainWindow):
             self.camera_widget.stop_camera()
         
         event.accept()
+
+
+    def update_statistics_display(self):
+        """İstatistik görüntüsünü güncelle"""
+        if not self.communication_started or self.first_packet_number is None:
+            # Henüz haberleşme başlamadı
+            self.stats_total_expected.setText("Toplam Beklenen: --")
+            self.stats_total_received.setText(f"Toplam Alınan: {self.total_received_packets}")
+            self.stats_lost_packets.setText("Kayıp Paket: --")
+            self.stats_success_rate.setText("Başarı Oranı: --%")
+            self.stats_data_rate.setText("Veri Hızı: 0.00 veri/sn")
+        else:
+            # Haberleşme başladı, istatistikleri hesapla
+            expected_packets = self.last_packet_number - self.first_packet_number + 1
+            lost_packets = expected_packets - self.total_received_packets
+            
+            if expected_packets > 0:
+                success_rate = (self.total_received_packets / expected_packets) * 100
+            else:
+                success_rate = 0
+            
+            # Veri hızı hesapla (saniyede kaç veri)
+            if self.communication_start_time is not None:
+                elapsed_time = time.time() - self.communication_start_time
+                if elapsed_time > 0:
+                    data_rate = self.total_received_packets / elapsed_time
+                else:
+                    data_rate = 0
+            else:
+                data_rate = 0
+            
+            # Label'ları güncelle
+            self.stats_total_expected.setText(f"Toplam Beklenen: {expected_packets}")
+            self.stats_total_received.setText(f"Toplam Alınan: {self.total_received_packets}")
+            
+            # Kayıp paket sayısına göre renk ayarla
+            if lost_packets > 0:
+                self.stats_lost_packets.setText(f"Kayıp Paket: {lost_packets}")
+                self.stats_lost_packets.setStyleSheet("font-weight: 500; color: #dc3545; font-size: 11px; padding: 1px 0px;")
+            else:
+                self.stats_lost_packets.setText("Kayıp Paket: 0")
+                self.stats_lost_packets.setStyleSheet("font-weight: 500; color: #198754; font-size: 11px; padding: 1px 0px;")
+            
+            # Başarı oranına göre renk ayarla
+            if success_rate >= 90:
+                color = "#198754"  # Yeşil
+            elif success_rate >= 70:
+                color = "#ffc107"  # Sarı
+            else:
+                color = "#dc3545"  # Kırmızı
+                
+            self.stats_success_rate.setText(f"Başarı Oranı: {success_rate:.1f}%")
+            self.stats_success_rate.setStyleSheet(f"font-weight: 500; color: {color}; font-size: 11px; padding: 1px 0px;")
+            
+            # Veri hızını göster (noktadan sonra 2 basamak)
+            self.stats_data_rate.setText(f"Veri Hızı: {data_rate:.2f} veri/sn")
+            self.stats_data_rate.setStyleSheet("font-weight: 500; color: #0d6efd; font-size: 11px; padding: 1px 0px;")
 
 
 def main():

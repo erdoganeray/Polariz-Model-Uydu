@@ -177,14 +177,49 @@ void loop() {
         char rhrh_str[5];
         decodeRHRH(telemetry->rhrh, rhrh_str);
         
-        // Tarih formatını datetime string'e çevir
+        // Tarih formatını datetime string'e çevir (Unix timestamp decode)
         unsigned long timestamp = telemetry->gonderme_saati;
-        int day = (timestamp / 86400) % 30 + 1;  // Basit gün hesabı
-        int month = ((timestamp / 86400) / 30) % 12 + 1;  // Basit ay hesabı
-        int year = 2025;  // Sabit yıl
-        int hour = (timestamp % 86400) / 3600;
-        int minute = (timestamp % 3600) / 60;
-        int second = timestamp % 60;
+        
+        // Unix timestamp'i tarih/saat componentlerine çevir
+        unsigned long seconds = timestamp % 60;
+        unsigned long minutes = (timestamp / 60) % 60;
+        unsigned long hours = (timestamp / 3600) % 24;
+        unsigned long days = (timestamp / 86400) + 1;
+        
+        // 1970'den itibaren gün sayısını yıl/ay/güne çevir
+        int year = 1970;
+        int month = 1;
+        int day = 1;
+        
+        // Basit yıl hesabı
+        while (days >= 365) {
+            if ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) {
+                if (days >= 366) {
+                    days -= 366;
+                    year++;
+                } else break;
+            } else {
+                days -= 365;
+                year++;
+            }
+        }
+        
+        // Ay hesabı
+        int days_in_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+        if ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) {
+            days_in_month[1] = 29; // Şubat 29 gün
+        }
+        
+        while (days >= days_in_month[month - 1]) {
+            days -= days_in_month[month - 1];
+            month++;
+            if (month > 12) {
+                month = 1;
+                year++;
+            }
+        }
+        
+        day = days + 1;
         
         // Hata kodunu binary string'e çevir (6 bit)
         String hata_kodu_str = "";
@@ -196,7 +231,7 @@ void loop() {
         Serial.print(telemetry->paket_sayisi); Serial.print(",");
         Serial.print(telemetry->uydu_statusu); Serial.print(",");
         Serial.print(hata_kodu_str); Serial.print(",");
-        Serial.printf("%02d.%02d.%d-%02d:%02d:%02d,", day, month, year, hour, minute, second);
+        Serial.printf("%02d.%02d.%d-%02d:%02d:%02d,", day, month, year, (int)hours, (int)minutes, (int)seconds);
         Serial.print(telemetry->basinc1, 1); Serial.print(",");
         Serial.print(telemetry->basinc2, 1); Serial.print(",");
         Serial.print(telemetry->yukseklik1, 1); Serial.print(",");
