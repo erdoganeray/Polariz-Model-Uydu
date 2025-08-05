@@ -2,8 +2,8 @@
 #include <LoRa_E22.h>
 #include "../binary_protocol.h"
 
-#define LORA_M0 19
-#define LORA_M1 18
+#define LORA_M0 13
+#define LORA_M1 12
 #define LORA_AUX 4
 #define LORA_TX 16
 #define LORA_RX 17
