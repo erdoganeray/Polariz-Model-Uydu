@@ -20,6 +20,46 @@ uint16_t paket_sayisi_lora3 = 1;
 // RHRH değeri - başlangıçta 0000, lora_2'den gelen değerle güncellenecek
 uint32_t current_rhrh = encodeRHRH('0', '0', '0', '0');
 
+// Yükseklik hesaplama için gerekli değişkenler
+float previous_altitude = 0.0;
+unsigned long previous_time = 0;
+
+// Basınç değerinden yükseklik hesaplama fonksiyonu
+float calculateAltitude(float pressure) {
+  // Deniz seviyesi basıncı (Pa)
+  const float SEA_LEVEL_PRESSURE = 101325.0;
+  
+  // Barometrik formül kullanarak yükseklik hesapla
+  // h = 44330 * (1 - (P/P0)^(1/5.255))
+  float altitude = 44330.0 * (1.0 - pow(pressure / SEA_LEVEL_PRESSURE, 1.0/5.255));
+  
+  return altitude;
+}
+
+// İniş hızı hesaplama fonksiyonu
+float calculateDescentRate(float current_altitude, unsigned long current_time) {
+  if (previous_time == 0) {
+    // İlk ölçüm, hız hesaplanamaz
+    previous_altitude = current_altitude;
+    previous_time = current_time;
+    return 0.0;
+  }
+  
+  float time_diff = (current_time - previous_time) / 1000.0; // saniye cinsinden
+  if (time_diff > 0) {
+    float altitude_diff = current_altitude - previous_altitude;
+    float descent_rate = altitude_diff / time_diff; // m/s
+    
+    // Değerleri güncelle
+    previous_altitude = current_altitude;
+    previous_time = current_time;
+    
+    return descent_rate;
+  }
+  
+  return 0.0;
+}
+
 void configureLoRa() {
   Serial.println("\n=== LoRa Konfigürasyonu ===");
   
@@ -115,7 +155,7 @@ void setup() {
 void sendTelemetryToLora2() {
   // Binary telemetry paketi oluştur
   TelemetryPacket telemetry;
-  
+
   telemetry.packet_type = PACKET_TYPE_TELEMETRY;
   telemetry.paket_sayisi = paket_sayisi_lora2;
   telemetry.uydu_statusu = 5;
@@ -123,10 +163,6 @@ void sendTelemetryToLora2() {
   telemetry.gonderme_saati = 1722426600; // Unix timestamp for 31/07/2025-14:30:00
   telemetry.basinc1 = 101325.00;
   telemetry.basinc2 = 101300.00;
-  telemetry.yukseklik1 = 150.50;
-  telemetry.yukseklik2 = 149.80;
-  telemetry.irtifa_farki = 0.70;
-  telemetry.inis_hizi = -2.30;
   telemetry.sicaklik = 2540; // 25.40°C * 100
   telemetry.pil_gerilimi = 377; // 3.77V * 100
   telemetry.gps1_latitude = 39.123456;
@@ -139,6 +175,22 @@ void sendTelemetryToLora2() {
   telemetry.iot_s1_data = 2250; // 22.50°C * 100
   telemetry.iot_s2_data = 2310; // 23.10°C * 100
   telemetry.takim_no = TAKIM_NO;
+  
+  // Basınç değerlerinden yükseklikleri hesapla
+  float yukseklik1 = calculateAltitude(101325.00);
+  float yukseklik2 = calculateAltitude(101300.00);
+  
+  // İrtifa farkını hesapla (mutlak değer)
+  float irtifa_farki = abs(yukseklik1 - yukseklik2);
+  
+  // İniş hızını hesapla
+  unsigned long current_time = millis();
+  float inis_hizi = calculateDescentRate(yukseklik1, current_time);
+
+  telemetry.yukseklik1 = yukseklik1;
+  telemetry.yukseklik2 = yukseklik2;
+  telemetry.irtifa_farki = irtifa_farki;
+  telemetry.inis_hizi = inis_hizi;
   
   ResponseStatus rs = E22.sendFixedMessage(0x00, 0x0A, 20, (uint8_t*)&telemetry, sizeof(telemetry));
   
