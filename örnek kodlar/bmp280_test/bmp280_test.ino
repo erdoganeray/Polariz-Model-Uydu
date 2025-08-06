@@ -57,6 +57,13 @@ TinyGPSPlus gps;
 #define GPS_BAUD 9600
 HardwareSerial gpsSerial(1);
 
+// Buzzer pin tanımlaması
+#define BUZZER_PIN 27
+
+// Buton pin tanımlamaları
+#define BUTTON1_PIN 35
+#define BUTTON2_PIN 34
+
 // SD Kart SPI pin tanımlamaları (main.ino'daki gibi)
 #define SD_SCK 18
 #define SD_MISO 19
@@ -78,9 +85,28 @@ bool rtc_status = false;
 bool sd_status = false;
 bool gps_status = false;
 
+// Buzzer kontrol değişkenleri
+unsigned long buzzer_last_time = 0;
+bool buzzer_state = false;
+const unsigned long BUZZER_INTERVAL = 1000; // 1 saniye = 1000ms
+
+// Buton durumları
+bool button1_state = false;
+bool button2_state = false;
+
 void setup() {
   Serial.begin(115200);
   Serial.println("BMP280, MPU6050, DS3231 RTC, SD Kart ve GPS Test Başlatılıyor...");
+  
+  // Pin modlarını ayarla
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(BUTTON1_PIN, INPUT_PULLUP);
+  pinMode(BUTTON2_PIN, INPUT_PULLUP);
+  
+  // Buzzer başlangıç sesi
+  digitalWrite(BUZZER_PIN, HIGH);
+  delay(100);
+  digitalWrite(BUZZER_PIN, LOW);
   
   // I2C başlat
   Wire.begin();
@@ -264,6 +290,31 @@ void setup() {
 }
 
 void loop() {
+  // Buzzer kontrolü (millis tabanlı)
+  unsigned long current_time = millis();
+  if (current_time - buzzer_last_time >= BUZZER_INTERVAL) {
+    buzzer_state = !buzzer_state;
+    digitalWrite(BUZZER_PIN, buzzer_state ? HIGH : LOW);
+    buzzer_last_time = current_time;
+  }
+  
+  // Buton durumlarını oku
+  bool new_button1_state = !digitalRead(BUTTON1_PIN); // INPUT_PULLUP olduğu için ters
+  bool new_button2_state = !digitalRead(BUTTON2_PIN); // INPUT_PULLUP olduğu için ters
+  
+  // Buton durumu değiştiğinde serial'a yazdır
+  if (new_button1_state != button1_state) {
+    button1_state = new_button1_state;
+    Serial.print("BUTTON1 (Pin 35): ");
+    Serial.println(button1_state ? "BASILDI" : "BIRAKILDI");
+  }
+  
+  if (new_button2_state != button2_state) {
+    button2_state = new_button2_state;
+    Serial.print("BUTTON2 (Pin 34): ");
+    Serial.println(button2_state ? "BASILDI" : "BIRAKILDI");
+  }
+  
   // GPS verilerini sürekli güncelle (main.ino'daki gibi)
   while (gpsSerial.available() > 0) {
     gps.encode(gpsSerial.read());
@@ -528,6 +579,15 @@ void loop() {
   Serial.print(gps_status ? "OK" : "HATA");
   Serial.print(" | SD: ");
   Serial.println(sd_status ? "OK" : "HATA");
+  
+  // === BUTON VE BUZZER DURUMU ===
+  Serial.println("--- Kontrol Durumu ---");
+  Serial.print("BUTTON1 (Pin 35): ");
+  Serial.print(button1_state ? "BASILDI" : "SERBEST");
+  Serial.print(" | BUTTON2 (Pin 34): ");
+  Serial.print(button2_state ? "BASILDI" : "SERBEST");
+  Serial.print(" | BUZZER (Pin 27): ");
+  Serial.println(buzzer_state ? "AÇIK" : "KAPALI");
   
   // === SD KART'A VERİ KAYDETME ===
   if (sd_status) {
@@ -887,6 +947,11 @@ void showHelp() {
   Serial.println("SD_TEST   - SD dosya işlemleri testini çalıştır");
   Serial.println("GPS_INFO  - GPS detaylı bilgilerini göster");
   Serial.println("HELP      - Bu yardım menüsünü göster");
+  Serial.println("====================================");
+  Serial.println("\n=== PİN KONFIGÜRASYONU ===");
+  Serial.println("Buzzer: Pin 27 (Otomatik 1s açık/kapalı)");
+  Serial.println("Button1: Pin 35 (INPUT_PULLUP)");
+  Serial.println("Button2: Pin 34 (INPUT_PULLUP)");
   Serial.println("====================================");
 }
 

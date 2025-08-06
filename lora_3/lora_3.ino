@@ -106,7 +106,7 @@ void sendPressureContainerToLora1() {
   
   pressureContainer.packet_type = PACKET_TYPE_PRESSURE_CONTAINER;
   pressureContainer.paket_sayisi = paket_sayisi;
-  pressureContainer.basinc1 = 98765.4;
+  pressureContainer.basinc1 = 98765.40;
   
   ResponseStatus rs = E22.sendFixedMessage(0x00, 0x0A, 10, (uint8_t*)&pressureContainer, sizeof(pressureContainer));
   

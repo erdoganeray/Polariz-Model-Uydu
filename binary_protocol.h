@@ -12,7 +12,7 @@
 #define PACKET_TYPE_L5_DATA 0x06
 
 // Sabit değerler
-#define TAKIM_NO 656241
+#define TAKIM_NO 626541
 
 // Telemetry paketi yapısı (toplam ~70 byte)
 struct __attribute__((packed)) TelemetryPacket {
@@ -21,23 +21,23 @@ struct __attribute__((packed)) TelemetryPacket {
     uint8_t uydu_statusu;          // 1 byte - uydu durumu
     uint8_t hata_kodu;             // 1 byte - 6 bitlik hata kodu (000000-111111)
     uint32_t gonderme_saati;       // 4 byte - Unix timestamp
-    float basinc1;                 // 4 byte - Pascal
-    float basinc2;                 // 4 byte - Pascal
-    float yukseklik1;              // 4 byte - metre
-    float yukseklik2;              // 4 byte - metre
-    float irtifa_farki;            // 4 byte - metre
-    float inis_hizi;               // 4 byte - m/s
-    int16_t sicaklik;              // 2 byte - Celsius * 10 (örn: 254 = 25.4°C)
-    uint16_t pil_gerilimi;         // 2 byte - Volt * 100 (örn: 377 = 3.77V)
+    float basinc1;                 // 4 byte - Pascal (2 decimal places)
+    float basinc2;                 // 4 byte - Pascal (2 decimal places)
+    float yukseklik1;              // 4 byte - metre (2 decimal places)
+    float yukseklik2;              // 4 byte - metre (2 decimal places)
+    float irtifa_farki;            // 4 byte - metre (2 decimal places)
+    float inis_hizi;               // 4 byte - m/s (2 decimal places)
+    int16_t sicaklik;              // 2 byte - Celsius * 100 (örn: 2540 = 25.40°C)
+    uint16_t pil_gerilimi;         // 2 byte - Volt * 100 (örn: 377 = 3.77V) (2 decimal places)
     float gps1_latitude;           // 4 byte - derece
     float gps1_longitude;          // 4 byte - derece
-    float gps1_altitude;           // 4 byte - metre
+    float gps1_altitude;           // 4 byte - metre (2 decimal places)
     int16_t pitch;                 // 2 byte - derece * 10
     int16_t roll;                  // 2 byte - derece * 10
     int16_t yaw;                   // 2 byte - derece * 10
     uint32_t rhrh;                 // 4 byte - encoded rakam/harf/rakam/harf
-    int16_t iot_s1_data;           // 2 byte - Celsius * 10
-    int16_t iot_s2_data;           // 2 byte - Celsius * 10
+    int16_t iot_s1_data;           // 2 byte - Celsius * 100 (örn: 2250 = 22.50°C)
+    int16_t iot_s2_data;           // 2 byte - Celsius * 100 (örn: 2310 = 23.10°C)
     uint32_t takim_no;             // 4 byte - sabit 656241
 };
 
@@ -66,7 +66,7 @@ struct __attribute__((packed)) PressureContainerPacket {
 struct __attribute__((packed)) LoraDataPacket {
     uint8_t packet_type;           // 1 byte - paket tipi (L4_DATA veya L5_DATA)
     uint16_t paket_sayisi;         // 2 byte - paket sayısı
-    int16_t temperature;           // 2 byte - Celsius * 10
+    int16_t temperature;           // 2 byte - Celsius * 100 (örn: 2580 = 25.80°C)
     uint8_t checksum;              // 1 byte - basit checksum
 };
 

@@ -17,6 +17,56 @@ LoRa_E22 E22(&Serial2, LORA_AUX, LORA_M0, LORA_M1);
 uint16_t paket_sayisi = 1;
 unsigned long son_yayin = 0;
 
+void configureLoRa() {
+  Serial.println("\n=== LoRa Konfigürasyonu ===");
+  
+  // Konfigürasyon yapısını oluştur
+  Configuration configuration;
+  
+  // *** ADDRESS AYARLARI ***
+  configuration.ADDH = 0x00;        // Yüksek adres byte'ı
+  configuration.ADDL = 0x0A;        // Düşük adres byte'ı (10 decimal = 0x0A hex)
+  configuration.NETID = 0x00;       // Network ID
+  
+  // *** CHANNEL AYARI ***
+  configuration.CHAN = 40;          // Kanal 40
+  
+  // *** AIR DATA RATE ***
+  configuration.SPED.airDataRate = AIR_DATA_RATE_011_48;  // 4.8kbps
+  
+  // *** PACKET SIZE ***
+  configuration.OPTION.subPacketSetting = SPS_240_00;  // 240 bytes
+  
+  // *** TRANSMISSION MODE ***
+  configuration.TRANSMISSION_MODE.fixedTransmission = FT_FIXED_TRANSMISSION;  // Sabit iletim
+  
+  // Diğer gerekli parametreler
+  configuration.SPED.uartBaudRate = UART_BPS_9600;
+  configuration.SPED.uartParity = MODE_00_8N1;
+  configuration.OPTION.transmissionPower = POWER_22;
+  configuration.OPTION.RSSIAmbientNoise = RSSI_AMBIENT_NOISE_DISABLED;
+  configuration.TRANSMISSION_MODE.enableRSSI = RSSI_DISABLED;
+  configuration.TRANSMISSION_MODE.enableRepeater = REPEATER_DISABLED;
+  configuration.TRANSMISSION_MODE.enableLBT = LBT_DISABLED;
+  configuration.TRANSMISSION_MODE.WORTransceiverControl = WOR_RECEIVER;
+  configuration.TRANSMISSION_MODE.WORPeriod = WOR_2000_011;
+  
+  // Konfigürasyonu LoRa modülüne gönder
+  ResponseStatus rs = E22.setConfiguration(configuration, WRITE_CFG_PWR_DWN_SAVE);
+  if (rs.code == 1) {
+    Serial.println("✓ LoRa konfigürasyonu başarıyla uygulandı!");
+    Serial.println("--- Uygulanan Ayarlar ---");
+    Serial.println("Address: 0x00:0x0A (10)");
+    Serial.println("Channel: 40");
+    Serial.println("Air Rate: 4.8kbps");
+    Serial.println("Packet Size: 240 bytes");
+    Serial.println("Mode: Fixed Transmission");
+    Serial.println("-------------------------");
+  } else {
+    Serial.println("✗ LoRa konfigürasyonu uygulanamadı!");
+  }
+}
+
 void printModuleInfo() {
   ResponseStructContainer c = E22.getModuleInformation();
   ModuleInformation moduleInfo = *(ModuleInformation*) c.data;
@@ -43,6 +93,7 @@ void setup() {
   delay(500);
   Serial2.begin(9600, SERIAL_8N1, LORA_RX, LORA_TX);
   E22.begin();
+  configureLoRa();
   Serial.println("LORA 4 - Duzenli Yayin Modulu baslatildi");
   printModuleInfo();
   printConfig();
@@ -55,7 +106,7 @@ void sendRegularData() {
   
   l4data.packet_type = PACKET_TYPE_L4_DATA;
   l4data.paket_sayisi = paket_sayisi;
-  l4data.temperature = 258; // 25.8°C * 10
+  l4data.temperature = 2580; // 25.80°C * 100
   l4data.checksum = calculateChecksum((uint8_t*)&l4data, sizeof(l4data));
   
   ResponseStatus rs = E22.sendFixedMessage(0x00, 0x0A, 10, (uint8_t*)&l4data, sizeof(l4data));
@@ -65,7 +116,7 @@ void sendRegularData() {
   Serial.print(" bytes), Paket#: ");
   Serial.print(paket_sayisi);
   Serial.print(", Sicaklik: ");
-  Serial.println(l4data.temperature / 10.0);
+  Serial.println(l4data.temperature / 100.0);
   Serial.print("Durum: ");
   Serial.println(rs.getResponseDescription());
   

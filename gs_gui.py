@@ -10,6 +10,7 @@ import os
 import time
 import random
 import math
+import csv
 from datetime import datetime
 from typing import Dict, List, Tuple
 import threading
@@ -40,6 +41,15 @@ class CameraWidget(QLabel):
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
         self.camera_index = -1
+        
+        # Video kaydetme değişkenleri
+        self.video_writer = None
+        self.is_recording = False
+        self.recording_start_time = None
+        
+        # Data klasör yolu
+        self.data_dir = os.path.join(os.path.dirname(__file__), "data")
+        os.makedirs(self.data_dir, exist_ok=True)
         
         # Placeholder ayarları
         self.setText("Kamera Aranıyor...")
@@ -90,15 +100,48 @@ class CameraWidget(QLabel):
             self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             self.camera.set(cv2.CAP_PROP_FPS, 30)
             
+            # Video kaydını başlat
+            self.start_recording()
+            
             # Timer'ı başlat (30 FPS için ~33ms)
             self.timer.start(33)
             print(f"Kamera başlatıldı: {self.camera_index}")
+    
+    def start_recording(self):
+        """Video kaydını başlat"""
+        if not self.is_recording:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            video_filename = os.path.join(self.data_dir, f"video_{timestamp}.mp4")
+            
+            # Video writer'ı başlat
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            self.video_writer = cv2.VideoWriter(video_filename, fourcc, 30.0, (640, 480))
+            
+            if self.video_writer and self.video_writer.isOpened():
+                self.is_recording = True
+                self.recording_start_time = time.time()
+                print(f"Video kaydetme başlatıldı: {video_filename}")
+            else:
+                print("Video kaydetme başlatılamadı!")
+    
+    def stop_recording(self):
+        """Video kaydını durdur"""
+        if self.is_recording and self.video_writer:
+            self.video_writer.release()
+            self.video_writer = None
+            self.is_recording = False
+            recording_duration = time.time() - self.recording_start_time if self.recording_start_time else 0
+            print(f"Video kaydetme durduruldu. Süre: {recording_duration:.1f} saniye")
     
     def update_frame(self):
         """Kamera frame'ini güncelle"""
         if self.camera and self.camera.isOpened():
             ret, frame = self.camera.read()
             if ret and frame is not None:
+                # Video kaydı aktifse frame'i kaydet
+                if self.is_recording and self.video_writer:
+                    self.video_writer.write(frame)
+                
                 # Frame'i QLabel boyutuna uygun şekilde yeniden boyutlandır
                 height, width, channel = frame.shape
                 bytes_per_line = 3 * width
@@ -136,6 +179,9 @@ class CameraWidget(QLabel):
         """Kamera akışını durdur"""
         if self.timer.isActive():
             self.timer.stop()
+        
+        # Video kaydını durdur
+        self.stop_recording()
         
         if self.camera:
             self.camera.release()
@@ -369,20 +415,26 @@ class TelemetryData:
     def __init__(self):
         self.paket_sayisi = 0
         self.uydu_statusu = 0
-        self.hata_kodu = "222222"  # Başlangıçta tüm sistemler beklemede (2=sarı)
-        self.basinc1 = 101325.0
-        self.basinc2 = 101300.0
-        self.yukseklik1 = 150.5
-        self.yukseklik2 = 149.8
-        self.irtifa_farki = 0.7
-        self.inis_hizi = -2.3
-        self.sicaklik = 25.4
-        self.pil_gerilimi = 0.0  # Default 0V
-        self.pitch = 15.2
-        self.roll = 8.7
-        self.yaw = 180.5
-        self.iot_s1_data = 22.5
-        self.iot_s2_data = 23.1
+        self.hata_kodu = "222222"  # Başlangıçta 6-bit hata kodu (010101)
+        self.gonderme_saati = ""
+        self.basinc1 = 0.00  # 2 decimal places precision
+        self.basinc2 = 0.00  # 2 decimal places precision
+        self.yukseklik1 = 0.00  # 2 decimal places precision
+        self.yukseklik2 = 0.00  # 2 decimal places precision
+        self.irtifa_farki = 0.00  # 2 decimal places precision
+        self.inis_hizi = -0.00  # 2 decimal places precision
+        self.sicaklik = 00.00  # Temperature with 2 decimal places precision (sent as value*100)
+        self.pil_gerilimi = 0.00  # Battery voltage with 2 decimal places precision
+        self.gps1_latitude = 0.000000
+        self.gps1_longitude = 0.000000
+        self.gps1_altitude = 0.00  # GPS altitude with 2 decimal places precision
+        self.pitch = 0.00  # Pitch with 2 decimal places precision
+        self.roll = 0.00  # Roll with 2 decimal places precision
+        self.yaw = 0.00  # Yaw with 2 decimal places precision
+        self.rhrh = "0000"
+        self.iot_s1_data = 22.50  # IoT temperature with 2 decimal places precision (sent as value*100)
+        self.iot_s2_data = 23.10  # IoT temperature with 2 decimal places precision (sent as value*100)
+        self.takim_no = 626541  # Takım numarası (corrected value)
         
     def simulate_update(self):
         """Simüle edilmiş veri güncellemesi"""
@@ -430,6 +482,13 @@ class GroundStationGUI(QMainWindow):
         self.total_received_packets = 0  # Alınan toplam paket sayısı
         self.communication_started = False  # Haberleşme başladı mı?
         self.communication_start_time = None  # Haberleşme başlangıç zamanı
+        
+        # CSV kaydetme için değişkenler
+        self.data_dir = os.path.join(os.path.dirname(__file__), "data")
+        os.makedirs(self.data_dir, exist_ok=True)
+        self.csv_file = None
+        self.csv_writer = None
+        self.csv_header_written = False
         
         self.init_ui()
         self.setup_timers()
@@ -665,7 +724,7 @@ class GroundStationGUI(QMainWindow):
             if i % 2 == 0:  # Rakam (0. ve 2. index)
                 combo.addItems([str(x) for x in range(21)])  # 0-20 arası sayılar
             else:  # Harf (1. ve 3. index)
-                combo.addItems(['M', 'F', 'N', 'R', 'G', 'B', 'P', 'Y', 'C'])  # Büyük harfler
+                combo.addItems(['A','M', 'F', 'N', 'R', 'G', 'B', 'P', 'Y', 'C'])  # Büyük harfler
             self.rhrh_combos.append(combo)
             combo_layout.addWidget(combo)
         
@@ -1088,7 +1147,15 @@ class GroundStationGUI(QMainWindow):
         # Serial bağlantı varsa RHRH komutunu gönder
         if self.is_listening and self.serial_connection:
             try:
-                # Önce RHRH değerini güncelle
+                # RHRH butonuna basıldığında manuel_ayrilma mutlaka 0 olmalı
+                # Önce manuel ayrılma değerini sıfırla
+                self.serial_connection.write(b'RESET_MANUEL\n')
+                self.add_log_message("Manuel ayrılma değeri sıfırlandı (RHRH komutu öncesi)")
+                
+                # Kısa bekleme
+                time.sleep(0.05)
+                
+                # RHRH değerini güncelle
                 rhrh_command = f'RHRH:{rhrh_code}\n'
                 self.serial_connection.write(rhrh_command.encode())
                 self.add_log_message(f"RHRH komutu LoRa'ya gönderildi: {rhrh_code}")
@@ -1126,6 +1193,79 @@ class GroundStationGUI(QMainWindow):
         if port_list:
             self.com_combo.setCurrentIndex(0)
             
+    def start_csv_logging(self):
+        """CSV kaydetme başlat"""
+        if not self.csv_file:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            csv_filename = os.path.join(self.data_dir, f"telemetri_{timestamp}.csv")
+            
+            try:
+                self.csv_file = open(csv_filename, 'w', newline='', encoding='utf-8')
+                self.csv_writer = csv.writer(self.csv_file)
+                self.csv_header_written = False
+                self.add_log_message(f"CSV kaydetme başlatıldı: {csv_filename}")
+            except Exception as e:
+                self.add_log_message(f"CSV dosyası oluşturulamadı: {str(e)}")
+    
+    def stop_csv_logging(self):
+        """CSV kaydetme durdur"""
+        if self.csv_file:
+            self.csv_file.close()
+            self.csv_file = None
+            self.csv_writer = None
+            self.csv_header_written = False
+            self.add_log_message("CSV kaydetme durduruldu")
+    
+    def write_telemetry_to_csv(self):
+        """Telemetri verisini CSV'ye yaz"""
+        if not self.csv_writer:
+            return
+        
+        try:
+            # Header'ı ilk seferde yaz
+            if not self.csv_header_written:
+                header = [
+                    'timestamp', 'paket_sayisi', 'uydu_statusu', 'hata_kodu', 'gonderme_saati',
+                    'basinc1', 'basinc2', 'yukseklik1', 'yukseklik2', 'irtifa_farki',
+                    'inis_hizi', 'sicaklik', 'pil_gerilimi', 'gps1_latitude', 'gps1_longitude',
+                    'gps1_altitude', 'pitch', 'roll', 'yaw', 'rhrh', 'iot_s1_data', 'iot_s2_data', 'takim_no'
+                ]
+                self.csv_writer.writerow(header)
+                self.csv_header_written = True
+            
+            # Veri satırını yaz
+            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            row = [
+                current_time,
+                self.telemetry_data.paket_sayisi,
+                self.telemetry_data.uydu_statusu,
+                self.telemetry_data.hata_kodu,
+                self.telemetry_data.gonderme_saati,
+                self.telemetry_data.basinc1,
+                self.telemetry_data.basinc2,
+                self.telemetry_data.yukseklik1,
+                self.telemetry_data.yukseklik2,
+                self.telemetry_data.irtifa_farki,
+                self.telemetry_data.inis_hizi,
+                self.telemetry_data.sicaklik,
+                self.telemetry_data.pil_gerilimi,
+                self.telemetry_data.gps1_latitude,
+                self.telemetry_data.gps1_longitude,
+                self.telemetry_data.gps1_altitude,
+                self.telemetry_data.pitch,
+                self.telemetry_data.roll,
+                self.telemetry_data.yaw,
+                self.telemetry_data.rhrh,
+                self.telemetry_data.iot_s1_data,
+                self.telemetry_data.iot_s2_data,
+                self.telemetry_data.takim_no
+            ]
+            self.csv_writer.writerow(row)
+            self.csv_file.flush()  # Dosyaya anında yaz
+            
+        except Exception as e:
+            self.add_log_message(f"CSV yazma hatası: {str(e)}")
+            
     def start_listening(self):
         """COM port dinlemeyi başlat"""
         if self.com_combo.count() == 0:
@@ -1149,6 +1289,9 @@ class GroundStationGUI(QMainWindow):
             self.communication_started = False
             self.communication_start_time = None
             self.update_statistics_display()
+            
+            # CSV kaydetme başlat
+            self.start_csv_logging()
             
             self.is_listening = True
             self.listen_thread = threading.Thread(target=self.listen_to_serial, daemon=True)
@@ -1174,6 +1317,9 @@ class GroundStationGUI(QMainWindow):
         
         if self.serial_connection and self.serial_connection.is_open:
             self.serial_connection.close()
+            
+        # CSV kaydetme durdur
+        self.stop_csv_logging()
             
         # İstatistik değişkenlerini sıfırla
         self.first_packet_number = None
@@ -1227,7 +1373,13 @@ class GroundStationGUI(QMainWindow):
         self.add_log_message("Serial dinleme durduruldu")
     
     def parse_telemetry_data(self, data_string):
-        """Parse telemetry data and update graphs"""
+        """Parse telemetry data and update graphs
+        
+        Data format from lora_2.ino:
+        - basinc1, basinc2: 2 decimal places precision
+        - sicaklik, iot_s1_data, iot_s2_data: 2 decimal places precision (values sent as temp*100)
+        - hata_kodu: 6-bit binary string (e.g., "010101")
+        """
         try:
             # Remove TEL, prefix if exists, or work with raw data
             if data_string.startswith("TEL,"):
@@ -1242,6 +1394,7 @@ class GroundStationGUI(QMainWindow):
                     paket_sayisi = int(parts[0])
                     uydu_statusu = int(parts[1])
                     hata_kodu = parts[2]
+                    gonderme_saati = parts[3]
                     basinc1 = float(parts[4])
                     basinc2 = float(parts[5])
                     yukseklik1 = float(parts[6])
@@ -1250,16 +1403,22 @@ class GroundStationGUI(QMainWindow):
                     inis_hizi = float(parts[9])
                     sicaklik = float(parts[10])
                     pil_gerilimi = float(parts[11])
+                    gps1_latitude = float(parts[12])
+                    gps1_longitude = float(parts[13])
+                    gps1_altitude = float(parts[14])
                     pitch = float(parts[15])
                     roll = float(parts[16])
                     yaw = float(parts[17])
+                    rhrh = parts[18]
                     iot_s1_data = float(parts[19])
                     iot_s2_data = float(parts[20])
+                    takim_no = int(parts[21])  # Takım numarası eklendi
                     
                     # Update telemetry data
                     self.telemetry_data.paket_sayisi = paket_sayisi
                     self.telemetry_data.uydu_statusu = uydu_statusu
                     self.telemetry_data.hata_kodu = hata_kodu
+                    self.telemetry_data.gonderme_saati = gonderme_saati
                     self.telemetry_data.basinc1 = basinc1
                     self.telemetry_data.basinc2 = basinc2
                     self.telemetry_data.yukseklik1 = yukseklik1
@@ -1268,11 +1427,16 @@ class GroundStationGUI(QMainWindow):
                     self.telemetry_data.inis_hizi = inis_hizi
                     self.telemetry_data.sicaklik = sicaklik
                     self.telemetry_data.pil_gerilimi = pil_gerilimi
+                    self.telemetry_data.gps1_latitude = gps1_latitude
+                    self.telemetry_data.gps1_longitude = gps1_longitude
+                    self.telemetry_data.gps1_altitude = gps1_altitude
                     self.telemetry_data.pitch = pitch
                     self.telemetry_data.roll = roll
                     self.telemetry_data.yaw = yaw
+                    self.telemetry_data.rhrh = rhrh
                     self.telemetry_data.iot_s1_data = iot_s1_data
                     self.telemetry_data.iot_s2_data = iot_s2_data
+                    self.telemetry_data.takim_no = takim_no  # Takım numarası eklendi
                     
                     # İstatistik güncellemesi
                     if not self.communication_started:
@@ -1299,6 +1463,9 @@ class GroundStationGUI(QMainWindow):
                     self.update_graph('temperature', current_time, sicaklik)  # Tek çizgi
                     self.update_graph('altitude_diff', current_time, irtifa_farki)  # Tek çizgi
                     self.update_graph('iot_temp', current_time, iot_s1_data, iot_s2_data)  # Çift çizgi: IoT1 ve IoT2
+                    
+                    # Telemetri verisini CSV dosyasına kaydet
+                    self.write_telemetry_to_csv()
                     
                     # Update status displays
                     # Pil gerilimi: 4.2V ile 3.3V arasında yüzde hesapla
@@ -1345,6 +1512,14 @@ class GroundStationGUI(QMainWindow):
         # Serial bağlantı varsa manuel ayrılma komutunu gönder
         if self.is_listening and self.serial_connection:
             try:
+                # Manuel ayrılma/birleşme butonlarına basıldığında RHRH değeri mutlaka "0A0A" olmalı
+                # Önce RHRH değerini 0A0A yap
+                self.serial_connection.write(b'RHRH:0A0A\n')
+                self.add_log_message("RHRH değeri 0A0A olarak ayarlandı (Manuel ayrılma öncesi)")
+                
+                # Kısa bekleme
+                time.sleep(0.05)
+                
                 # Manuel ayrılma değerini true yap
                 self.serial_connection.write(b'MANUEL_AYRILMA\n')
                 self.add_log_message("Manuel ayrılma komutu LoRa'ya gönderildi")
@@ -1365,6 +1540,14 @@ class GroundStationGUI(QMainWindow):
         # Serial bağlantı varsa manuel birleşme komutunu gönder
         if self.is_listening and self.serial_connection:
             try:
+                # Manuel ayrılma/birleşme butonlarına basıldığında RHRH değeri mutlaka "0A0A" olmalı
+                # Önce RHRH değerini 0A0A yap
+                self.serial_connection.write(b'RHRH:0A0A\n')
+                self.add_log_message("RHRH değeri 0A0A olarak ayarlandı (Manuel birleşme öncesi)")
+                
+                # Kısa bekleme
+                time.sleep(0.05)
+                
                 # Manuel birleşme değerini 2 yap (yeni komut)
                 self.serial_connection.write(b'MANUEL_BIRLESME\n')
                 self.add_log_message("Manuel birleşme komutu LoRa'ya gönderildi")
@@ -1392,6 +1575,9 @@ class GroundStationGUI(QMainWindow):
         """Uygulama kapatılırken çağrılan fonksiyon"""
         if self.is_listening:
             self.stop_listening()
+        
+        # CSV kaydetme durdur
+        self.stop_csv_logging()
         
         # Kamerayı kapat
         if self.camera_widget:

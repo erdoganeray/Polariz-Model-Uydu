@@ -2,8 +2,8 @@
 #include <LoRa_E22.h>
 #include "../binary_protocol.h"
 
-#define LORA_M0 13
-#define LORA_M1 12
+#define LORA_M0 19
+#define LORA_M1 18
 #define LORA_AUX 4
 #define LORA_TX 16
 #define LORA_RX 17
@@ -19,56 +19,6 @@ uint16_t paket_sayisi_lora3 = 1;
 
 // RHRH değeri - başlangıçta 0000, lora_2'den gelen değerle güncellenecek
 uint32_t current_rhrh = encodeRHRH('0', '0', '0', '0');
-
-void configureLoRa() {
-  Serial.println("\n=== LoRa Konfigürasyonu ===");
-  
-  // Konfigürasyon yapısını oluştur
-  Configuration configuration;
-  
-  // *** ADDRESS AYARLARI ***
-  configuration.ADDH = 0x00;        // Yüksek adres byte'ı
-  configuration.ADDL = 0x0A;        // Düşük adres byte'ı (10 decimal = 0x0A hex)
-  configuration.NETID = 0x00;       // Network ID
-  
-  // *** CHANNEL AYARI ***
-  configuration.CHAN = 10;          // Kanal 10
-  
-  // *** AIR DATA RATE ***
-  configuration.SPED.airDataRate = AIR_DATA_RATE_011_48;  // 4.8kbps
-  
-  // *** PACKET SIZE ***
-  configuration.OPTION.subPacketSetting = SPS_240_00;  // 240 bytes
-  
-  // *** TRANSMISSION MODE ***
-  configuration.TRANSMISSION_MODE.fixedTransmission = FT_FIXED_TRANSMISSION;  // Sabit iletim
-  
-  // Diğer gerekli parametreler
-  configuration.SPED.uartBaudRate = UART_BPS_9600;
-  configuration.SPED.uartParity = MODE_00_8N1;
-  configuration.OPTION.transmissionPower = POWER_22;
-  configuration.OPTION.RSSIAmbientNoise = RSSI_AMBIENT_NOISE_DISABLED;
-  configuration.TRANSMISSION_MODE.enableRSSI = RSSI_DISABLED;
-  configuration.TRANSMISSION_MODE.enableRepeater = REPEATER_DISABLED;
-  configuration.TRANSMISSION_MODE.enableLBT = LBT_DISABLED;
-  configuration.TRANSMISSION_MODE.WORTransceiverControl = WOR_RECEIVER;
-  configuration.TRANSMISSION_MODE.WORPeriod = WOR_2000_011;
-  
-  // Konfigürasyonu LoRa modülüne gönder
-  ResponseStatus rs = E22.setConfiguration(configuration, WRITE_CFG_PWR_DWN_SAVE);
-  if (rs.code == 1) {
-    Serial.println("✓ LoRa konfigürasyonu başarıyla uygulandı!");
-    Serial.println("--- Uygulanan Ayarlar ---");
-    Serial.println("Address: 0x00:0x0A (10)");
-    Serial.println("Channel: 10");
-    Serial.println("Air Rate: 4.8kbps");
-    Serial.println("Packet Size: 240 bytes");
-    Serial.println("Mode: Fixed Transmission");
-    Serial.println("-------------------------");
-  } else {
-    Serial.println("✗ LoRa konfigürasyonu uygulanamadı!");
-  }
-}
 
 void printModuleInfo() {
   ResponseStructContainer c = E22.getModuleInformation();
@@ -96,7 +46,6 @@ void setup() {
   delay(500);
   Serial2.begin(9600, SERIAL_8N1, LORA_RX, LORA_TX);
   E22.begin();
-  configureLoRa();
   Serial.println("LORA 1 - Ana Kontrol Merkezi baslatildi");
   
   // Başlangıç RHRH değerini göster
@@ -119,25 +68,25 @@ void sendTelemetryToLora2() {
   telemetry.packet_type = PACKET_TYPE_TELEMETRY;
   telemetry.paket_sayisi = paket_sayisi_lora2;
   telemetry.uydu_statusu = 5;
-  telemetry.hata_kodu = 0b010101; // 010101 binary (6 bit)
+  telemetry.hata_kodu = 0b01010; // 01010 binary
   telemetry.gonderme_saati = 1722426600; // Unix timestamp for 31/07/2025-14:30:00
-  telemetry.basinc1 = 101325.00;
-  telemetry.basinc2 = 101300.00;
-  telemetry.yukseklik1 = 150.50;
-  telemetry.yukseklik2 = 149.80;
-  telemetry.irtifa_farki = 0.70;
-  telemetry.inis_hizi = -2.30;
-  telemetry.sicaklik = 2540; // 25.40°C * 100
+  telemetry.basinc1 = 101325.0;
+  telemetry.basinc2 = 101300.0;
+  telemetry.yukseklik1 = 150.5;
+  telemetry.yukseklik2 = 149.8;
+  telemetry.irtifa_farki = 0.7;
+  telemetry.inis_hizi = -2.3;
+  telemetry.sicaklik = 254; // 25.4°C * 10
   telemetry.pil_gerilimi = 377; // 3.77V * 100
   telemetry.gps1_latitude = 39.123456;
   telemetry.gps1_longitude = 32.654321;
-  telemetry.gps1_altitude = 155.20;
+  telemetry.gps1_altitude = 155.2;
   telemetry.pitch = 152; // 15.2° * 10
   telemetry.roll = 87; // 8.7° * 10
   telemetry.yaw = 1805; // 180.5° * 10
   telemetry.rhrh = current_rhrh; // Güncel RHRH değerini kullan
-  telemetry.iot_s1_data = 2250; // 22.50°C * 100
-  telemetry.iot_s2_data = 2310; // 23.10°C * 100
+  telemetry.iot_s1_data = 225; // 22.5°C * 10
+  telemetry.iot_s2_data = 231; // 23.1°C * 10
   telemetry.takim_no = TAKIM_NO;
   
   ResponseStatus rs = E22.sendFixedMessage(0x00, 0x0A, 20, (uint8_t*)&telemetry, sizeof(telemetry));
@@ -226,7 +175,7 @@ bool waitForMessage(unsigned long timeout_ms) {
                 Serial.print("\n4444444444 L4 Data - Paket#: ");
                 Serial.print(l4data->paket_sayisi);
                 Serial.print(", Sicaklik: ");
-                Serial.println(l4data->temperature / 100.0);
+                Serial.println(l4data->temperature / 10.0);
               } else {
                 Serial.println("L4 Data - Checksum hatasi!");
               }
@@ -240,7 +189,7 @@ bool waitForMessage(unsigned long timeout_ms) {
                 Serial.print("\n5555555555 L5 Data - Paket#: ");
                 Serial.print(l5data->paket_sayisi);
                 Serial.print(", Sicaklik: ");
-                Serial.println(l5data->temperature / 100.0);
+                Serial.println(l5data->temperature / 10.0);
               } else {
                 Serial.println("L5 Data - Checksum hatasi!");
               }

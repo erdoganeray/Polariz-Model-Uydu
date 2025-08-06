@@ -24,8 +24,58 @@ uint8_t manuel_ayrilma_degeri = 0; // Başlangıç değeri false
 bool send_aktif = false;
 unsigned long son_send_zamani = 0;
 uint8_t send_sayaci = 0;
-const uint8_t max_send_sayisi = 5;
-const unsigned long send_araligi = 200; // 200ms
+const uint8_t max_send_sayisi = 4;
+const unsigned long send_araligi = 300; // 300ms
+
+void configureLoRa() {
+  Serial.println("\n=== LoRa Konfigürasyonu ===");
+  
+  // Konfigürasyon yapısını oluştur
+  Configuration configuration;
+  
+  // *** ADDRESS AYARLARI ***
+  configuration.ADDH = 0x00;        // Yüksek adres byte'ı
+  configuration.ADDL = 0x0A;        // Düşük adres byte'ı (10 decimal = 0x0A hex)
+  configuration.NETID = 0x00;       // Network ID
+  
+  // *** CHANNEL AYARI ***
+  configuration.CHAN = 20;          // Kanal 20
+  
+  // *** AIR DATA RATE ***
+  configuration.SPED.airDataRate = AIR_DATA_RATE_011_48;  // 4.8kbps
+  
+  // *** PACKET SIZE ***
+  configuration.OPTION.subPacketSetting = SPS_240_00;  // 240 bytes
+  
+  // *** TRANSMISSION MODE ***
+  configuration.TRANSMISSION_MODE.fixedTransmission = FT_FIXED_TRANSMISSION;  // Sabit iletim
+  
+  // Diğer gerekli parametreler
+  configuration.SPED.uartBaudRate = UART_BPS_9600;
+  configuration.SPED.uartParity = MODE_00_8N1;
+  configuration.OPTION.transmissionPower = POWER_22;
+  configuration.OPTION.RSSIAmbientNoise = RSSI_AMBIENT_NOISE_DISABLED;
+  configuration.TRANSMISSION_MODE.enableRSSI = RSSI_DISABLED;
+  configuration.TRANSMISSION_MODE.enableRepeater = REPEATER_DISABLED;
+  configuration.TRANSMISSION_MODE.enableLBT = LBT_DISABLED;
+  configuration.TRANSMISSION_MODE.WORTransceiverControl = WOR_RECEIVER;
+  configuration.TRANSMISSION_MODE.WORPeriod = WOR_2000_011;
+  
+  // Konfigürasyonu LoRa modülüne gönder
+  ResponseStatus rs = E22.setConfiguration(configuration, WRITE_CFG_PWR_DWN_SAVE);
+  if (rs.code == 1) {
+    Serial.println("✓ LoRa konfigürasyonu başarıyla uygulandı!");
+    Serial.println("--- Uygulanan Ayarlar ---");
+    Serial.println("Address: 0x00:0x0A (10)");
+    Serial.println("Channel: 20");
+    Serial.println("Air Rate: 4.8kbps");
+    Serial.println("Packet Size: 240 bytes");
+    Serial.println("Mode: Fixed Transmission");
+    Serial.println("-------------------------");
+  } else {
+    Serial.println("✗ LoRa konfigürasyonu uygulanamadı!");
+  }
+}
 
 void printModuleInfo() {
   ResponseStructContainer c = E22.getModuleInformation();
@@ -53,6 +103,7 @@ void setup() {
   delay(500);
   Serial2.begin(9600, SERIAL_8N1, LORA_RX, LORA_TX);
   E22.begin();
+  configureLoRa();
   Serial.println("LORA 2 - Button Control baslatildi");
   Serial.println("Komutlar:");
   Serial.println("  'SEND' - 5 kere button control gonder");
@@ -251,23 +302,23 @@ void loop() {
         Serial.print(telemetry->uydu_statusu); Serial.print(",");
         Serial.print(hata_kodu_str); Serial.print(",");
         Serial.printf("%02d.%02d.%d-%02d:%02d:%02d,", day, month, year, (int)hours, (int)minutes, (int)seconds);
-        Serial.print(telemetry->basinc1, 1); Serial.print(",");
-        Serial.print(telemetry->basinc2, 1); Serial.print(",");
-        Serial.print(telemetry->yukseklik1, 1); Serial.print(",");
-        Serial.print(telemetry->yukseklik2, 1); Serial.print(",");
-        Serial.print(telemetry->irtifa_farki, 1); Serial.print(",");
-        Serial.print(telemetry->inis_hizi, 1); Serial.print(",");
-        Serial.print(telemetry->sicaklik / 10.0, 1); Serial.print(",");
+        Serial.print(telemetry->basinc1, 2); Serial.print(",");
+        Serial.print(telemetry->basinc2, 2); Serial.print(",");
+        Serial.print(telemetry->yukseklik1, 2); Serial.print(",");
+        Serial.print(telemetry->yukseklik2, 2); Serial.print(",");
+        Serial.print(telemetry->irtifa_farki, 2); Serial.print(",");
+        Serial.print(telemetry->inis_hizi, 2); Serial.print(",");
+        Serial.print(telemetry->sicaklik / 100.0, 2); Serial.print(",");
         Serial.print(telemetry->pil_gerilimi / 100.0, 2); Serial.print(",");
         Serial.print(telemetry->gps1_latitude, 6); Serial.print(",");
         Serial.print(telemetry->gps1_longitude, 6); Serial.print(",");
-        Serial.print(telemetry->gps1_altitude, 1); Serial.print(",");
+        Serial.print(telemetry->gps1_altitude, 2); Serial.print(",");
         Serial.print(telemetry->pitch / 10.0, 1); Serial.print(",");
         Serial.print(telemetry->roll / 10.0, 1); Serial.print(",");
         Serial.print(telemetry->yaw / 10.0, 1); Serial.print(",");
         Serial.print(rhrh_str); Serial.print(",");
-        Serial.print(telemetry->iot_s1_data / 10.0, 1); Serial.print(",");
-        Serial.print(telemetry->iot_s2_data / 10.0, 1); Serial.print(",");
+        Serial.print(telemetry->iot_s1_data / 100.0, 2); Serial.print(",");
+        Serial.print(telemetry->iot_s2_data / 100.0, 2); Serial.print(",");
         Serial.println(telemetry->takim_no);
         
       } else {
