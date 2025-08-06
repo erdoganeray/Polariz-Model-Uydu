@@ -34,6 +34,10 @@
 #define SERVO1_PIN 33
 #define SERVO2_PIN 25
 
+// DC Motor pin tanımlamaları
+#define DC_ILERI 26
+#define DC_GERI 32
+
 // Renk pozisyonları (derece cinsinden)
 #define POS_BOS 40      // Boş pozisyon
 #define POS_KIRMIZI 80 // Kırmızı pozisyon
@@ -69,6 +73,12 @@ String rhrh_command = "";
 
 // Lora 2'den gelen manuel ayrılma değeri
 uint8_t current_manuel_ayrilma = 0; // 0=normal, 1=ayrılma, 2=birleşme
+
+// DC Motor kontrolü için değişkenler
+bool dc_motor_running = false;
+unsigned long dc_motor_start_time = 0;
+unsigned long dc_motor_duration = 0;
+uint8_t dc_motor_direction = 0; // 0=durdur, 1=ileri, 2=geri
 
 // Lora 3'ten gelen basınç değeri
 float basinc_lora3 = 0.00; // Varsayılan değer
@@ -111,6 +121,64 @@ void initServos() {
   // Servo motorları attach et
   servo1.attach(SERVO1_PIN);
   servo2.attach(SERVO2_PIN);
+}
+
+// DC Motor kontrolü için yardımcı fonksiyonlar
+void initDCMotor() {
+  // DC motor pinlerini output olarak ayarla
+  pinMode(DC_ILERI, OUTPUT);
+  pinMode(DC_GERI, OUTPUT);
+  
+  // Başlangıçta motoru durdur
+  digitalWrite(DC_ILERI, LOW);
+  digitalWrite(DC_GERI, LOW);
+  Serial.println("DC Motor pinleri baslatildi");
+}
+
+// DC Motor hareket fonksiyonları
+void startDCMotor(uint8_t direction, unsigned long duration_ms) {
+  // Önce motoru durdur
+  digitalWrite(DC_ILERI, LOW);
+  digitalWrite(DC_GERI, LOW);
+  
+  dc_motor_direction = direction;
+  dc_motor_duration = duration_ms;
+  dc_motor_start_time = millis();
+  dc_motor_running = true;
+  
+  // Yönü ayarla
+  if (direction == 1) { // İleri
+    digitalWrite(DC_ILERI, HIGH);
+    digitalWrite(DC_GERI, LOW);
+    Serial.print("DC Motor ILERI basladi - Sure: ");
+    Serial.print(duration_ms);
+    Serial.println(" ms");
+  } else if (direction == 2) { // Geri
+    digitalWrite(DC_ILERI, LOW);
+    digitalWrite(DC_GERI, HIGH);
+    Serial.print("DC Motor GERI basladi - Sure: ");
+    Serial.print(duration_ms);
+    Serial.println(" ms");
+  }
+}
+
+void stopDCMotor() {
+  digitalWrite(DC_ILERI, LOW);
+  digitalWrite(DC_GERI, LOW);
+  dc_motor_running = false;
+  Serial.println("DC Motor durduruldu");
+}
+
+// DC Motor durumunu güncelleme fonksiyonu (loop'ta çağrılacak)
+void updateDCMotor() {
+  if (!dc_motor_running) {
+    return;
+  }
+  
+  // Süre doldu mu kontrol et
+  if (millis() - dc_motor_start_time >= dc_motor_duration) {
+    stopDCMotor();
+  }
 }
 
 // Servo pozisyon ayarlama fonksiyonu
@@ -266,12 +334,21 @@ void updateRHRH() {
 
 // Manuel işlem fonksiyonları
 void manuelAyrilma() {
+  Serial.println("MANUEL AYRILMA islemi baslatildi");
+  
+  // DC motoru 10 saniye ileri döndür
+  startDCMotor(1, 10000); // 1=ileri, 10000ms=10 saniye
   
   // Manuel ayrılma değerini sıfırla
   current_manuel_ayrilma = 0;
 }
 
 void manuelBirlesme() {
+  Serial.println("MANUEL BIRLESME islemi baslatildi");
+  
+  // DC motoru 1 saniye geri döndür
+  startDCMotor(2, 1000); // 2=geri, 1000ms=1 saniye
+  
   // Manuel ayrılma değerini sıfırla
   current_manuel_ayrilma = 0;
 }
@@ -888,6 +965,9 @@ void setup() {
   // Servo motorları başlat
   initServos();
   
+  // DC motorları başlat
+  initDCMotor();
+  
   // Pin modlarını ayarla
   pinMode(SEPERATION, INPUT);
   pinMode(UYDU_STATU, INPUT);
@@ -1074,7 +1154,7 @@ void sendTelemetryToLora2() {
   telemetry.packet_type = PACKET_TYPE_TELEMETRY;
   telemetry.paket_sayisi = paket_sayisi_lora2;
   telemetry.uydu_statusu = 5;
-  telemetry.hata_kodu = 0b010101; // 010101 binary (6 bit)
+  telemetry.hata_kodu = 0b111111; // 010101 binary (6 bit)
   telemetry.gonderme_saati = getRTCUnixTime(); // RTC'den gerçek zaman
   telemetry.basinc1 = bmp_basinc; // BMP280'den gelen basınç
   telemetry.basinc2 = basinc_lora3; // Lora 3'ten gelen basınç
@@ -1295,6 +1375,9 @@ void loop() {
   // RHRH işlemini güncelle
   updateRHRH();
   
+  // DC Motor işlemini güncelle
+  updateDCMotor();
+  
   // Zamanlayıcı başlat
   unsigned long loop_start_time = millis();
   
@@ -1311,6 +1394,9 @@ void loop() {
     
     // RHRH işlemini güncelle
     updateRHRH();
+    
+    // DC Motor işlemini güncelle
+    updateDCMotor();
     
     if (E22.available() > 1) {
       waitForMessage(100); // Kısa timeout ile mesaj işle
