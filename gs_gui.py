@@ -47,6 +47,10 @@ class CameraWidget(QLabel):
         self.is_recording = False
         self.recording_start_time = None
         
+        # Frame okuma hata sayacı
+        self.frame_error_count = 0
+        self.max_frame_errors = 10  # 10 ardışık hata sonra reconnect
+        
         # Data klasör yolu
         self.data_dir = os.path.join(os.path.dirname(__file__), "data")
         os.makedirs(self.data_dir, exist_ok=True)
@@ -72,40 +76,151 @@ class CameraWidget(QLabel):
         
     def find_usb_camera(self):
         """USB video yakalama cihazını otomatik olarak bul"""
-        # Birden fazla kamera indexini dene (0-10 arası)
-        for index in range(11):
-            cap = cv2.VideoCapture(index)
-            if cap.isOpened():
-                # Kamera özelliklerini kontrol et
-                ret, frame = cap.read()
-                if ret and frame is not None:
-                    self.camera_index = index
-                    self.camera = cap
-                    self.setText(f"Kamera Bulundu (Index: {index})")
-                    print(f"USB Kamera bulundu: Index {index}")
-                    break
-                cap.release()
+        # Öncelikle USB kameralarını ara (index 1'den başla, 0 genellikle laptop kamerası)
+        usb_camera_found = False
+        
+        # Önce USB kameraları ara (index 1-10)
+        for index in range(1, 11):
+            try:
+                # USB kameralar için DirectShow backend kullan (MSMF sorunlarını önlemek için)
+                cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+                if not cap.isOpened():
+                    # DirectShow ile açılamazsa varsayılan backend dene
+                    cap = cv2.VideoCapture(index)
+                
+                if cap.isOpened():
+                    # Kamera özelliklerini kontrol et
+                    ret, frame = cap.read()
+                    
+                    if ret and frame is not None:
+                        self.camera_index = index
+                        self.camera = cap
+                        self.setText(f"USB Kamera (Index: {index})")
+                        print(f"USB Kamera bulundu: Index {index}")
+                        usb_camera_found = True
+                        break
+                    else:
+                        cap.release()
+                else:
+                    cap.release()
+            except Exception as e:
+                try:
+                    cap.release()
+                except:
+                    pass
+        
+        # USB kamera bulunamazsa, laptop kamerasını dene (index 0)
+        if not usb_camera_found:
+            try:
+                cap = cv2.VideoCapture(0)
+                
+                if cap.isOpened():
+                    ret, frame = cap.read()
+                    
+                    if ret and frame is not None:
+                        self.camera_index = 0
+                        self.camera = cap
+                        self.setText(f"Laptop Kamerası (Index: 0)")
+                        print("Laptop kamerası kullanılıyor: Index 0")
+                    else:
+                        cap.release()
+                else:
+                    cap.release()
+            except Exception as e:
+                pass
         
         if self.camera_index == -1:
             self.setText("USB Kamera\nBulunamadı")
-            print("USB video yakalama cihazı bulunamadı")
+            print("Video yakalama cihazı bulunamadı")
         else:
             self.start_camera()
+    
+    def check_for_usb_camera(self):
+        """USB kamera girişi kontrolü - laptop kamerasından USB kameraya geçiş için"""
+        # Sadece laptop kamerası aktifse USB kamera ara
+        if self.camera_index == 0:
+            # USB kameraları kontrol et (index 1-10)
+            for index in range(1, 11):
+                try:
+                    cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+                    if not cap.isOpened():
+                        cap = cv2.VideoCapture(index)
+                    
+                    if cap.isOpened():
+                        # Kameranın gerçekten çalışıp çalışmadığını test et
+                        ret, frame = cap.read()
+                        if ret and frame is not None:
+                            print(f"Yeni USB kamera bulundu: Index {index}, geçiş yapılıyor...")
+                            # Mevcut kamerayı durdur
+                            self.stop_camera()
+                            # USB kameranın hazır olması için bekle
+                            time.sleep(0.5)
+                            # Yeni kamerayı başlat
+                            self.camera_index = index
+                            self.camera = cap
+                            self.setText(f"USB Kamera (Index: {index})")
+                            self.start_camera()
+                            print(f"USB kameraya geçiş tamamlandı: Index {index}")
+                            return True
+                        else:
+                            cap.release()
+                    else:
+                        cap.release()
+                except Exception as e:
+                    try:
+                        cap.release()
+                    except:
+                        pass
+        return False
     
     def start_camera(self):
         """Kamera görüntü akışını başlat"""
         if self.camera and self.camera.isOpened():
+            # Hata sayacını sıfırla
+            self.frame_error_count = 0
+            
+            # USB kamera için MSMF backend sorunlarını önlemek amacıyla CAP_DSHOW kullan
+            if self.camera_index > 0:
+                # Mevcut kamerayı kapat
+                self.camera.release()
+                # DirectShow backend ile yeniden aç (MSMF yerine)
+                self.camera = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+                if not self.camera.isOpened():
+                    self.camera = cv2.VideoCapture(self.camera_index)
+            
+            # Kamera açık mı kontrol et
+            if not self.camera.isOpened():
+                self.setText("USB Kamera\nAçılamadı")
+                return
+            
             # Kamera çözünürlüğünü ayarla
             self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             self.camera.set(cv2.CAP_PROP_FPS, 30)
+            
+            # Frame test et
+            ret, test_frame = self.camera.read()
+            if ret and test_frame is not None:
+                print(f"Kamera başarıyla başlatıldı: Index {self.camera_index}")
+            else:
+                print("USB kamera frame hatası - laptop kamerasına dönülüyor...")
+                # USB kamera çalışmıyorsa laptop kamerasına dön
+                self.camera.release()
+                self.camera = cv2.VideoCapture(0)
+                self.camera_index = 0
+                self.setText("Laptop Kamerası (USB hatası)")
+            
+            # USB kamera için ek stabilite beklemesi
+            if self.camera_index > 0:
+                time.sleep(0.5)
             
             # Video kaydını başlat
             self.start_recording()
             
             # Timer'ı başlat (30 FPS için ~33ms)
             self.timer.start(33)
-            print(f"Kamera başlatıldı: {self.camera_index}")
+        else:
+            self.setText("Kamera Hatası")
     
     def start_recording(self):
         """Video kaydını başlat"""
@@ -138,6 +253,9 @@ class CameraWidget(QLabel):
         if self.camera and self.camera.isOpened():
             ret, frame = self.camera.read()
             if ret and frame is not None:
+                # Frame başarıyla okundu, hata sayacını sıfırla
+                self.frame_error_count = 0
+                
                 # Video kaydı aktifse frame'i kaydet
                 if self.is_recording and self.video_writer:
                     self.video_writer.write(frame)
@@ -164,11 +282,25 @@ class CameraWidget(QLabel):
                 
                 self.setPixmap(scaled_pixmap)
             else:
-                # Frame okunamıyorsa bağlantıyı yeniden dene
+                # Frame okunamadı, hata sayacını artır
+                self.frame_error_count += 1
+                
+                # Sadece çok fazla ardışık hata olursa reconnect yap
+                if self.frame_error_count >= self.max_frame_errors:
+                    print(f"Çok fazla frame hatası, kamera yeniden bağlanıyor... (Index {self.camera_index})")
+                    self.reconnect_camera()
+        else:
+            self.frame_error_count += 1
+            if self.frame_error_count >= self.max_frame_errors:
+                print("Kamera erişim hatası, yeniden bağlanıyor...")
                 self.reconnect_camera()
     
     def reconnect_camera(self):
         """Kamera bağlantısını yeniden kur"""
+        print("Kamera yeniden bağlanıyor...")
+        # Hata sayacını sıfırla
+        self.frame_error_count = 0
+        
         if self.camera:
             self.camera.release()
         
@@ -569,23 +701,24 @@ class GroundStationGUI(QMainWindow):
                     'data_x': [],
                     'data_y1': [],  # İlk çizgi verisi
                     'data_y2': [],  # İkinci çizgi verisi
-                    'curve1': plot_widget.plot(pen={'color': '#0d6efd', 'width': 2}),  # Mavi çizgi
-                    'curve2': plot_widget.plot(pen={'color': '#dc3545', 'width': 2})   # Kırmızı çizgi
                 }
                 
-                # Legend ekleme
+                # Legend ekleme ve curve oluşturma
                 if graph_id == 'pressure':
                     plot_widget.addLegend()
-                    self.graphs[graph_id]['curve1'].setData(name='Yük (Basınç1)')
-                    self.graphs[graph_id]['curve2'].setData(name='Taşıyıcı (Basınç2)')
+                    # Legend için isimler curve oluşturulurken verilir
+                    self.graphs[graph_id]['curve1'] = plot_widget.plot(pen={'color': '#0d6efd', 'width': 2}, name='Yük (Basınç1)')
+                    self.graphs[graph_id]['curve2'] = plot_widget.plot(pen={'color': '#dc3545', 'width': 2}, name='Taşıyıcı (Basınç2)')
                 elif graph_id == 'altitude':
                     plot_widget.addLegend()
-                    self.graphs[graph_id]['curve1'].setData(name='Yük (Yükseklik1)')
-                    self.graphs[graph_id]['curve2'].setData(name='Taşıyıcı (Yükseklik2)')
+                    # Legend için isimler curve oluşturulurken verilir
+                    self.graphs[graph_id]['curve1'] = plot_widget.plot(pen={'color': '#0d6efd', 'width': 2}, name='Yük (Yükseklik1)')
+                    self.graphs[graph_id]['curve2'] = plot_widget.plot(pen={'color': '#dc3545', 'width': 2}, name='Taşıyıcı (Yükseklik2)')
                 elif graph_id == 'iot_temp':
                     plot_widget.addLegend()
-                    self.graphs[graph_id]['curve1'].setData(name='IoT Sensor 1')
-                    self.graphs[graph_id]['curve2'].setData(name='IoT Sensor 2')
+                    # Legend için isimler curve oluşturulurken verilir
+                    self.graphs[graph_id]['curve1'] = plot_widget.plot(pen={'color': '#0d6efd', 'width': 2}, name='IoT Sensor 1')
+                    self.graphs[graph_id]['curve2'] = plot_widget.plot(pen={'color': '#dc3545', 'width': 2}, name='IoT Sensor 2')
             else:
                 # Tek çizgili grafikler için mevcut yapı
                 self.graphs[graph_id] = {
@@ -961,7 +1094,7 @@ class GroundStationGUI(QMainWindow):
         left_layout.setContentsMargins(4, 4, 4, 4)  # İç kenar boşlukları
         
         # Sol bölüm bilgileri
-        self.status_label1 = QLabel("Pil Gerilimi: 0.0V (--%)")  # Default 0V
+        self.status_label1 = QLabel("Pil Gerilimi: 0.00V (--%)")  # Default 0V
         self.status_label1.setStyleSheet("font-weight: 500; color: #495057; font-size: 11px; padding: 2px 0px;")
         
         self.status_label2 = QLabel("Statü: 0 (Uçuşa Hazır)")  # Default 0
@@ -1054,6 +1187,11 @@ class GroundStationGUI(QMainWindow):
         self.model_timer.timeout.connect(self.update_3d_model)
         self.model_timer.start(100)
         
+        # USB kamera kontrol timer'ı (2 saniyede bir)
+        self.camera_check_timer = QTimer()
+        self.camera_check_timer.timeout.connect(self.check_usb_camera)
+        self.camera_check_timer.start(2000)  # Her 2 saniyede kontrol et
+        
     def update_data(self):
         """Verileri güncelleme - sadece simülasyon için değil gerçek veri gelirse durdur"""
         # Simülasyon kaldırıldı - sadece gerçek COM verisiyle çalışacak
@@ -1098,6 +1236,14 @@ class GroundStationGUI(QMainWindow):
             self.telemetry_data.roll, 
             self.telemetry_data.yaw
         )
+        
+    def check_usb_camera(self):
+        """USB kamera girişi kontrolü - her 2 saniyede çalışır"""
+        if self.camera_widget:
+            result = self.camera_widget.check_for_usb_camera()
+            if result:
+                # USB kameraya geçiş başarılı
+                self.add_log_message("USB kamera algılandı ve geçiş yapıldı")
         
     def update_error_display(self):
         """Hata kodu tablosunu güncelleme - HTML tablosu ile"""
@@ -1150,7 +1296,7 @@ class GroundStationGUI(QMainWindow):
                 # RHRH butonuna basıldığında manuel_ayrilma mutlaka 0 olmalı
                 # Önce manuel ayrılma değerini sıfırla
                 self.serial_connection.write(b'RESET_MANUEL\n')
-                self.add_log_message("Manuel ayrılma değeri sıfırlandı (RHRH komutu öncesi)")
+                self.add_log_message("Manuel değeri 0'a sıfırlandı (RHRH komutu öncesi)")
                 
                 # Kısa bekleme
                 time.sleep(0.05)
@@ -1225,7 +1371,7 @@ class GroundStationGUI(QMainWindow):
             # Header'ı ilk seferde yaz
             if not self.csv_header_written:
                 header = [
-                    'timestamp', 'paket_sayisi', 'uydu_statusu', 'hata_kodu', 'gonderme_saati',
+                    'paket_sayisi', 'uydu_statusu', 'hata_kodu', 'gonderme_saati',
                     'basinc1', 'basinc2', 'yukseklik1', 'yukseklik2', 'irtifa_farki',
                     'inis_hizi', 'sicaklik', 'pil_gerilimi', 'gps1_latitude', 'gps1_longitude',
                     'gps1_altitude', 'pitch', 'roll', 'yaw', 'rhrh', 'iot_s1_data', 'iot_s2_data', 'takim_no'
@@ -1234,9 +1380,7 @@ class GroundStationGUI(QMainWindow):
                 self.csv_header_written = True
             
             # Veri satırını yaz
-            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
             row = [
-                current_time,
                 self.telemetry_data.paket_sayisi,
                 self.telemetry_data.uydu_statusu,
                 self.telemetry_data.hata_kodu,
@@ -1471,11 +1615,11 @@ class GroundStationGUI(QMainWindow):
                     # Pil gerilimi: 4.2V ile 3.3V arasında yüzde hesapla
                     if pil_gerilimi <= 0:
                         # 0V veya negatif değerler için özel durum
-                        self.status_label1.setText("Pil Gerilimi: 0.0V (--%)") 
+                        self.status_label1.setText("Pil Gerilimi: 0.00V (--%)") 
                     else:
                         battery_percent = int((pil_gerilimi - 3.3) / (4.2 - 3.3) * 100)
                         battery_percent = max(0, min(100, battery_percent))  # 0-100 arası sınırla
-                        self.status_label1.setText(f"Pil Gerilimi: {pil_gerilimi:.1f}V ({battery_percent}%)")
+                        self.status_label1.setText(f"Pil Gerilimi: {pil_gerilimi:.2f}V ({battery_percent}%)")
                     
                     # Uydu statusu metni
                     status_texts = {
@@ -1520,9 +1664,9 @@ class GroundStationGUI(QMainWindow):
                 # Kısa bekleme
                 time.sleep(0.05)
                 
-                # Manuel ayrılma değerini true yap
+                # Manuel ayrılma değerini 1 yap
                 self.serial_connection.write(b'MANUEL_AYRILMA\n')
-                self.add_log_message("Manuel ayrılma komutu LoRa'ya gönderildi")
+                self.add_log_message("Manuel ayrılma komutu LoRa'ya gönderildi (değer: 1)")
                 
                 # Kısa bir bekleme sonra SEND komutunu gönder
                 time.sleep(0.1)
@@ -1548,9 +1692,9 @@ class GroundStationGUI(QMainWindow):
                 # Kısa bekleme
                 time.sleep(0.05)
                 
-                # Manuel birleşme değerini 2 yap (yeni komut)
+                # Manuel birleşme değerini 2 yap
                 self.serial_connection.write(b'MANUEL_BIRLESME\n')
-                self.add_log_message("Manuel birleşme komutu LoRa'ya gönderildi")
+                self.add_log_message("Manuel birleşme komutu LoRa'ya gönderildi (değer: 2)")
                 
                 # Kısa bir bekleme sonra SEND komutunu gönder
                 time.sleep(0.1)
@@ -1575,6 +1719,10 @@ class GroundStationGUI(QMainWindow):
         """Uygulama kapatılırken çağrılan fonksiyon"""
         if self.is_listening:
             self.stop_listening()
+        
+        # Timer'ları durdur
+        if hasattr(self, 'camera_check_timer'):
+            self.camera_check_timer.stop()
         
         # CSV kaydetme durdur
         self.stop_csv_logging()

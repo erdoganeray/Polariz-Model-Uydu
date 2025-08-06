@@ -52,8 +52,8 @@ RTC_DS3231 rtc;
 TinyGPSPlus gps;
 
 // GPS UART1 Pin tanımlamaları (main.ino'daki gibi)
-#define GPS_RX 16
-#define GPS_TX 17
+#define GPS_RX 15
+#define GPS_TX 14
 #define GPS_BAUD 9600
 HardwareSerial gpsSerial(1);
 
@@ -296,8 +296,8 @@ void loop() {
     buzzer_state = !buzzer_state;
     digitalWrite(BUZZER_PIN, buzzer_state ? HIGH : LOW);
     buzzer_last_time = current_time;
+    delay(1000);
   }
-  
   // Buton durumlarını oku
   bool new_button1_state = !digitalRead(BUTTON1_PIN); // INPUT_PULLUP olduğu için ters
   bool new_button2_state = !digitalRead(BUTTON2_PIN); // INPUT_PULLUP olduğu için ters
