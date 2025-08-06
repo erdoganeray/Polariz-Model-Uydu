@@ -26,6 +26,19 @@
 #define SD_MOSI 23
 #define SD_CS 5             
 
+#define SERVO1_PIN 33
+#define SERVO2_PIN 25
+
+// LEDC servo kontrolü için ayarlar
+#define SERVO_FREQ 50      // 50Hz servo frekansı
+#define SERVO_RESOLUTION 16 // 16-bit çözünürlük
+
+// Renk pozisyonları (derece cinsinden)
+#define POS_BOS 0      // Boş pozisyon
+#define POS_KIRMIZI 60 // Kırmızı pozisyon
+#define POS_MAVI 120   // Mavi pozisyon
+#define POS_YESIL 180  // Yeşil pozisyon             
+
 LoRa_E22 E22(&Serial2, LORA_AUX, LORA_M0, LORA_M1);
 
 // BMP280 sensor
@@ -42,6 +55,15 @@ uint16_t paket_sayisi_lora3 = 1;
 
 // RHRH değeri - başlangıçta 0A0A, lora_2'den gelen değerle güncellenecek
 uint32_t current_rhrh = encodeRHRH('0', 'A', '0', 'A');
+
+// RHRH işleme için değişkenler
+bool rhrh_processing = false;
+unsigned long rhrh_start_time = 0;
+uint8_t rhrh_step = 0;
+String rhrh_command = "";
+
+// Lora 2'den gelen manuel ayrılma değeri
+uint8_t current_manuel_ayrilma = 0; // 0=normal, 1=ayrılma, 2=birleşme
 
 // Lora 3'ten gelen basınç değeri
 float basinc_lora3 = 0.00; // Varsayılan değer
@@ -72,6 +94,200 @@ bool mpu_calibrated = false;
 
 // SD kart durumu
 bool sd_status = false;
+
+// Servo kontrolü için yardımcı fonksiyonlar
+void initServos() {
+  // Yeni ESP32 Arduino Core için LEDC kanallarını servo kontrolü için ayarla
+  ledcAttach(SERVO1_PIN, SERVO_FREQ, SERVO_RESOLUTION);
+  ledcAttach(SERVO2_PIN, SERVO_FREQ, SERVO_RESOLUTION);
+}
+
+// Açıyı PWM değerine çeviren fonksiyon
+uint32_t angleToMicroseconds(int angle) {
+  // Servo açısını mikrosaniye cinsinden PWM değerine çevir
+  // 0° = 1000μs, 180° = 2000μs
+  return map(angle, 0, 180, 1000, 2000);
+}
+
+// Servo pozisyon ayarlama fonksiyonu
+void writeServo(int pin, int angle) {
+  // Açıyı sınırla (0-180 derece)
+  angle = constrain(angle, 0, 180);
+  
+  // Mikrosaniye değerini hesapla
+  uint32_t microseconds = angleToMicroseconds(angle);
+  
+  // PWM duty cycle'ı hesapla (16-bit çözünürlük için)
+  // PWM periyodu = 1/50Hz = 20ms = 20000μs
+  // Duty cycle = (pulse_width / period) * (2^resolution - 1)
+  uint32_t duty = (microseconds * ((1 << SERVO_RESOLUTION) - 1)) / 20000;
+  
+  // PWM sinyalini uygula (yeni API)
+  ledcWrite(pin, duty);
+}
+
+// Servo pozisyon ayarlama fonksiyonu
+void setServoPositions(char color_code) {
+  int servo1_pos = POS_BOS;
+  int servo2_pos = POS_BOS;
+  
+  switch (color_code) {
+    case 'M': // kırmızı + kırmızı
+      servo1_pos = POS_KIRMIZI;
+      servo2_pos = POS_KIRMIZI;
+      break;
+    case 'F': // yeşil + yeşil
+      servo1_pos = POS_YESIL;
+      servo2_pos = POS_YESIL;
+      break;
+    case 'N': // mavi + mavi
+      servo1_pos = POS_MAVI;
+      servo2_pos = POS_MAVI;
+      break;
+    case 'R': // kırmızı + boş
+      servo1_pos = POS_KIRMIZI;
+      servo2_pos = POS_BOS;
+      break;
+    case 'G': // yeşil + boş
+      servo1_pos = POS_YESIL;
+      servo2_pos = POS_BOS;
+      break;
+    case 'B': // mavi + boş
+      servo1_pos = POS_MAVI;
+      servo2_pos = POS_BOS;
+      break;
+    case 'P': // kırmızı + mavi
+      servo1_pos = POS_KIRMIZI;
+      servo2_pos = POS_MAVI;
+      break;
+    case 'Y': // kırmızı + yeşil
+      servo1_pos = POS_KIRMIZI;
+      servo2_pos = POS_YESIL;
+      break;
+    case 'C': // mavi + yeşil
+      servo1_pos = POS_MAVI;
+      servo2_pos = POS_YESIL;
+      break;
+    case 'A': // boş + boş (varsayılan)
+    default:
+      servo1_pos = POS_BOS;
+      servo2_pos = POS_BOS;
+      break;
+  }
+  
+  // Servo pozisyonlarını ayarla
+  writeServo(SERVO1_PIN, servo1_pos);
+  writeServo(SERVO2_PIN, servo2_pos);
+  
+  Serial.print("Servo pozisyonları ayarlandı - Renk: ");
+  Serial.print(color_code);
+  Serial.print(", Servo1: ");
+  Serial.print(servo1_pos);
+  Serial.print("°, Servo2: ");
+  Serial.print(servo2_pos);
+  Serial.println("°");
+}
+
+// RHRH komutunu başlatma fonksiyonu
+void startRHRHCommand(uint32_t rhrh_value) {
+  char rhrh_str[5];
+  decodeRHRH(rhrh_value, rhrh_str);
+  
+  // 0A0A ise işlem yapma
+  if (strcmp(rhrh_str, "0A0A") == 0) {
+    return;
+  }
+  
+  Serial.print("RHRH komutu başlatılıyor: ");
+  Serial.println(rhrh_str);
+  
+  rhrh_command = String(rhrh_str);
+  rhrh_processing = true;
+  rhrh_start_time = millis();
+  rhrh_step = 0;
+  
+  // İlk adımı başlat
+  processRHRHStep();
+}
+
+// RHRH adımını işleme fonksiyonu
+void processRHRHStep() {
+  if (!rhrh_processing || rhrh_command.length() < 4) {
+    return;
+  }
+  
+  if (rhrh_step >= 2) {
+    // Tüm adımlar tamamlandı
+    Serial.println("RHRH komutu tamamlandı - 0A0A pozisyonuna dönülüyor");
+    setServoPositions('A'); // Boş pozisyona dön
+    current_rhrh = encodeRHRH('0', 'A', '0', 'A');
+    rhrh_processing = false;
+    return;
+  }
+  
+  // Mevcut adımın süresini ve rengini al
+  char duration_char = rhrh_command.charAt(rhrh_step * 2);
+  char color_char = rhrh_command.charAt(rhrh_step * 2 + 1);
+  
+  int duration = duration_char - '0'; // Karakter rakamı integer'a çevir
+  
+  Serial.print("RHRH Adım ");
+  Serial.print(rhrh_step + 1);
+  Serial.print(": ");
+  Serial.print(duration);
+  Serial.print(" saniye ");
+  Serial.print(color_char);
+  Serial.println(" rengi");
+  
+  // Servo pozisyonlarını ayarla
+  setServoPositions(color_char);
+  
+  // Süreyi kaydet (milisaniye cinsinden)
+  rhrh_start_time = millis();
+  rhrh_step++;
+}
+
+// RHRH işlemini güncelleme fonksiyonu (loop'ta çağrılacak)
+void updateRHRH() {
+  if (!rhrh_processing) {
+    return;
+  }
+  
+  // Mevcut adımın süresini kontrol et
+  char duration_char = rhrh_command.charAt((rhrh_step - 1) * 2);
+  int duration = duration_char - '0';
+  unsigned long duration_ms = duration * 1000; // Saniyeyi milisaniyeye çevir
+  
+  if (millis() - rhrh_start_time >= duration_ms) {
+    // Mevcut adım tamamlandı, bir sonrakine geç
+    processRHRHStep();
+  }
+}
+
+// Manuel işlem fonksiyonları
+void manuelAyrilma() {
+  
+  // 2 saniye bekle
+  unsigned long start_time = millis();
+  while (millis() - start_time < 2000) {
+    delay(10);
+  }
+  
+  // Manuel ayrılma değerini sıfırla
+  current_manuel_ayrilma = 0;
+}
+
+void manuelBirlesme() {
+  
+  // 2 saniye bekle
+  unsigned long start_time = millis();
+  while (millis() - start_time < 2000) {
+    delay(10);
+  }
+  
+  // Manuel ayrılma değerini sıfırla
+  current_manuel_ayrilma = 0;
+}
 
 // Basınç değerinden yükseklik hesaplama fonksiyonu
 float calculateAltitude(float pressure, float reference_pressure) {
@@ -498,6 +714,15 @@ void setup() {
   delay(500);
   Serial2.begin(9600, SERIAL_8N1, LORA_RX, LORA_TX);
   
+  // Servo motorları başlat
+  initServos();
+  
+  // Servo motorları başlangıç pozisyonuna getir (boş pozisyon)
+  writeServo(SERVO1_PIN, POS_BOS);
+  writeServo(SERVO2_PIN, POS_BOS);
+  delay(500); // Servo motorların pozisyona gelmesi için bekle
+  Serial.println("Servo motorlar baslatildi - Baslangic pozisyonu: BOS");
+  
   // BMP280 sensörünü başlat
   Wire.begin(21, 22); // SDA=21, SCL=22 (ESP32 default)
   if (!bmp.begin(0x76)) {  // BMP280 I2C adresi genellikle 0x76 veya 0x77
@@ -676,21 +901,9 @@ void sendTelemetryToLora2() {
   Serial.print(paket_sayisi_lora2);
   Serial.print(", RHRH: ");
   Serial.print(rhrh_str);
-  Serial.print(", BMP280 Basinc: ");
-  Serial.print(bmp_basinc);
-  Serial.print(" Pa, BMP280 Sicaklik: ");
-  Serial.print(bmp_sicaklik);
-  Serial.print("°C");
-  Serial.print(", MPU6050 P/R/Y: ");
-  Serial.print(pitch);
-  Serial.print("/");
-  Serial.print(roll);
-  Serial.print("/");
-  Serial.print(yaw);
-  Serial.print("°, SD: ");
-  Serial.print(sd_status ? "OK" : "HATA");
-  Serial.println();
-  Serial.print("Durum: ");
+  Serial.print(", Manuel: ");
+  Serial.print(current_manuel_ayrilma);
+  Serial.print(", Durum: ");
   Serial.println(rs.getResponseDescription());
   
   paket_sayisi_lora2++;
@@ -722,7 +935,17 @@ bool waitForMessage(unsigned long timeout_ms) {
               Serial.print("\n2222222222 Button Control - Paket#: ");
               Serial.print(btn->paket_sayisi);
               Serial.print(", Manuel Ayrilma: ");
-              Serial.print(btn->manuel_ayrilma ? "true" : "false");
+              Serial.print(btn->manuel_ayrilma);
+              
+              // Manuel ayrılma değerini güncelle
+              current_manuel_ayrilma = btn->manuel_ayrilma;
+              
+              // Manuel işlem kontrol et
+              if (btn->manuel_ayrilma == 1) {
+                manuelAyrilma();
+              } else if (btn->manuel_ayrilma == 2) {
+                manuelBirlesme();
+              }
               
               // RHRH değerini güncelle
               uint32_t eski_rhrh = current_rhrh;
@@ -742,6 +965,9 @@ bool waitForMessage(unsigned long timeout_ms) {
                 Serial.print(" -> ");
                 Serial.print(rhrh_str);
                 Serial.print(")");
+                
+                // RHRH komutu başlat (eğer 0A0A değilse)
+                startRHRHCommand(btn->rhrh);
               }
               Serial.println();
             }
@@ -826,6 +1052,9 @@ void loop() {
   // SD kart durumunu kontrol et
   checkSDStatus();
   
+  // RHRH işlemini güncelle
+  updateRHRH();
+  
   // Zamanlayıcı başlat
   unsigned long loop_start_time = millis();
   
@@ -836,6 +1065,9 @@ void loop() {
   while (millis() - loop_start_time < 950) {
     // Serial komutları kontrol et
     processSerialCommand();
+    
+    // RHRH işlemini güncelle
+    updateRHRH();
     
     if (E22.available() > 1) {
       waitForMessage(100); // Kısa timeout ile mesaj işle

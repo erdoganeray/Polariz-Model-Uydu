@@ -1151,7 +1151,7 @@ class GroundStationGUI(QMainWindow):
                 # RHRH butonuna basıldığında manuel_ayrilma mutlaka 0 olmalı
                 # Önce manuel ayrılma değerini sıfırla
                 self.serial_connection.write(b'RESET_MANUEL\n')
-                self.add_log_message("Manuel ayrılma değeri sıfırlandı (RHRH komutu öncesi)")
+                self.add_log_message("Manuel değeri 0'a sıfırlandı (RHRH komutu öncesi)")
                 
                 # Kısa bekleme
                 time.sleep(0.05)
@@ -1519,9 +1519,9 @@ class GroundStationGUI(QMainWindow):
                 # Kısa bekleme
                 time.sleep(0.05)
                 
-                # Manuel ayrılma değerini true yap
+                # Manuel ayrılma değerini 1 yap
                 self.serial_connection.write(b'MANUEL_AYRILMA\n')
-                self.add_log_message("Manuel ayrılma komutu LoRa'ya gönderildi")
+                self.add_log_message("Manuel ayrılma komutu LoRa'ya gönderildi (değer: 1)")
                 
                 # Kısa bir bekleme sonra SEND komutunu gönder
                 time.sleep(0.1)
@@ -1547,9 +1547,9 @@ class GroundStationGUI(QMainWindow):
                 # Kısa bekleme
                 time.sleep(0.05)
                 
-                # Manuel birleşme değerini 2 yap (yeni komut)
+                # Manuel birleşme değerini 2 yap
                 self.serial_connection.write(b'MANUEL_BIRLESME\n')
-                self.add_log_message("Manuel birleşme komutu LoRa'ya gönderildi")
+                self.add_log_message("Manuel birleşme komutu LoRa'ya gönderildi (değer: 2)")
                 
                 # Kısa bir bekleme sonra SEND komutunu gönder
                 time.sleep(0.1)

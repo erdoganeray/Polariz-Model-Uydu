@@ -296,8 +296,8 @@ void loop() {
     buzzer_state = !buzzer_state;
     digitalWrite(BUZZER_PIN, buzzer_state ? HIGH : LOW);
     buzzer_last_time = current_time;
+    delay(1000);
   }
-  
   // Buton durumlarını oku
   bool new_button1_state = !digitalRead(BUTTON1_PIN); // INPUT_PULLUP olduğu için ters
   bool new_button2_state = !digitalRead(BUTTON2_PIN); // INPUT_PULLUP olduğu için ters
