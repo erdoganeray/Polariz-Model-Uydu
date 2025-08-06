@@ -4,6 +4,7 @@
 #include <Wire.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
+#include <RTClib.h>
 #include "../binary_protocol.h"
 
 #define LORA_M0 13
@@ -23,6 +24,9 @@ Adafruit_BMP280 bmp;
 
 // MPU6050 sensor
 Adafruit_MPU6050 mpu;
+
+// DS3231 RTC modülü
+RTC_DS3231 rtc;
 
 uint16_t paket_sayisi_lora2 = 1;
 uint16_t paket_sayisi_lora3 = 1;
@@ -93,6 +97,81 @@ float calculateDescentRate(float current_altitude, unsigned long current_time) {
   }
   
   return 0.0;
+}
+
+// RTC'den Unix timestamp alma fonksiyonu
+uint32_t getRTCUnixTime() {
+  DateTime now = rtc.now();
+  return now.unixtime();
+}
+
+// RTC tarih/saat bilgisi alma fonksiyonu
+void printRTCDateTime() {
+  DateTime now = rtc.now();
+  Serial.print("RTC Tarih/Saat: ");
+  Serial.print(now.day(), DEC);
+  Serial.print('/');
+  Serial.print(now.month(), DEC);
+  Serial.print('/');
+  Serial.print(now.year(), DEC);
+  Serial.print(" ");
+  Serial.print(now.hour(), DEC);
+  Serial.print(':');
+  if (now.minute() < 10) Serial.print('0');
+  Serial.print(now.minute(), DEC);
+  Serial.print(':');
+  if (now.second() < 10) Serial.print('0');
+  Serial.print(now.second(), DEC);
+  Serial.print(" (Unix: ");
+  Serial.print(now.unixtime());
+  Serial.println(")");
+}
+
+// Serial monitörden gelen SET komutunu işleme fonksiyonu
+void processSerialCommand() {
+  if (Serial.available() > 0) {
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+    
+    // SET komutunu kontrol et (format: SET DD,MM,YY,HH,MM,SS)
+    if (command.startsWith("SET ")) {
+      String dateTime = command.substring(4); // "SET " kısmını atla
+      
+      // Virgüllerle ayrılmış değerleri parse et
+      int day, month, year, hour, minute, second;
+      if (sscanf(dateTime.c_str(), "%d,%d,%d,%d,%d,%d", &day, &month, &year, &hour, &minute, &second) == 6) {
+        // 2 haneli yılı 4 haneli yıla çevir (25 -> 2025)
+        if (year < 100) {
+          year += 2000;
+        }
+        
+        // RTC'yi ayarla
+        rtc.adjust(DateTime(year, month, day, hour, minute, second));
+        
+        Serial.print("RTC tarih/saat ayarlandi: ");
+        Serial.print(day);
+        Serial.print("/");
+        Serial.print(month);
+        Serial.print("/");
+        Serial.print(year);
+        Serial.print(" ");
+        Serial.print(hour);
+        Serial.print(":");
+        if (minute < 10) Serial.print("0");
+        Serial.print(minute);
+        Serial.print(":");
+        if (second < 10) Serial.print("0");
+        Serial.println(second);
+        
+        // Kontrol için ayarlanan zamanı oku
+        delay(100);
+        printRTCDateTime();
+      } else {
+        Serial.println("Hata: Gecersiz format! Kullanim: SET DD,MM,YY,HH,MM,SS");
+        Serial.println("Ornek: SET 06,08,25,17,25,00");
+      }
+    }
+  }
 }
 
 // MPU6050'den açı değerlerini oku
@@ -248,6 +327,26 @@ void setup() {
   }
   Serial.println("MPU6050 sensor baslatildi");
   
+  // DS3231 RTC modülünü başlat
+  Serial.println("DS3231 RTC baslatiluyor...");
+  if (!rtc.begin()) {
+    Serial.println("DS3231 RTC bulunamadi!");
+    while(1); // Program dur
+  }
+  Serial.println("DS3231 RTC baslatildi");
+  
+  // RTC zamanını kontrol et
+  if (rtc.lostPower()) {
+    Serial.println("RTC guc kaybetti, varsayilan zaman ayarlaniyor...");
+    // Varsayılan olarak derleme zamanını ayarla
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+  
+  // Mevcut RTC zamanını göster
+  printRTCDateTime();
+  Serial.println("RTC tarih/saat ayarlamak icin 'SET DD,MM,YY,HH,MM,SS' komutunu kullanin");
+  Serial.println("Ornek: SET 06,08,25,17,25,00 (6 Agustos 2025, 17:25:00)");
+  
   // MPU6050 ayarları
   mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
   mpu.setGyroRange(MPU6050_RANGE_500_DEG);
@@ -308,7 +407,7 @@ void sendTelemetryToLora2() {
   telemetry.paket_sayisi = paket_sayisi_lora2;
   telemetry.uydu_statusu = 5;
   telemetry.hata_kodu = 0b010101; // 010101 binary (6 bit)
-  telemetry.gonderme_saati = 1722426600; // Unix timestamp for 31/07/2025-14:30:00
+  telemetry.gonderme_saati = getRTCUnixTime(); // RTC'den gerçek zaman
   telemetry.basinc1 = bmp_basinc; // BMP280'den gelen basınç
   telemetry.basinc2 = basinc_lora3; // Lora 3'ten gelen basınç
   telemetry.sicaklik = (int16_t)(bmp_sicaklik * 100); // BMP280'den gelen sıcaklık * 100
@@ -494,6 +593,9 @@ bool waitForMessage(unsigned long timeout_ms) {
 void loop() {
   Serial.println("=== COMM LOOP BASLADI ===");
   
+  // Serial komutları kontrol et
+  processSerialCommand();
+  
   // Zamanlayıcı başlat
   unsigned long loop_start_time = millis();
   
@@ -502,6 +604,9 @@ void loop() {
   
   // 2. 1 saniye dolana kadar dinleme modunda ol
   while (millis() - loop_start_time < 950) {
+    // Serial komutları kontrol et
+    processSerialCommand();
+    
     if (E22.available() > 1) {
       waitForMessage(100); // Kısa timeout ile mesaj işle
     }

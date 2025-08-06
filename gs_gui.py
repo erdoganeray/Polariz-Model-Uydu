@@ -1226,7 +1226,7 @@ class GroundStationGUI(QMainWindow):
             # Header'ı ilk seferde yaz
             if not self.csv_header_written:
                 header = [
-                    'timestamp', 'paket_sayisi', 'uydu_statusu', 'hata_kodu', 'gonderme_saati',
+                    'paket_sayisi', 'uydu_statusu', 'hata_kodu', 'gonderme_saati',
                     'basinc1', 'basinc2', 'yukseklik1', 'yukseklik2', 'irtifa_farki',
                     'inis_hizi', 'sicaklik', 'pil_gerilimi', 'gps1_latitude', 'gps1_longitude',
                     'gps1_altitude', 'pitch', 'roll', 'yaw', 'rhrh', 'iot_s1_data', 'iot_s2_data', 'takim_no'
@@ -1235,9 +1235,7 @@ class GroundStationGUI(QMainWindow):
                 self.csv_header_written = True
             
             # Veri satırını yaz
-            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
             row = [
-                current_time,
                 self.telemetry_data.paket_sayisi,
                 self.telemetry_data.uydu_statusu,
                 self.telemetry_data.hata_kodu,
