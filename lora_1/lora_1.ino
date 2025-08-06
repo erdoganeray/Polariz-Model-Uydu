@@ -34,10 +34,10 @@
 #define SERVO_RESOLUTION 16 // 16-bit çözünürlük
 
 // Renk pozisyonları (derece cinsinden)
-#define POS_BOS 0      // Boş pozisyon
-#define POS_KIRMIZI 60 // Kırmızı pozisyon
+#define POS_BOS 40      // Boş pozisyon
+#define POS_KIRMIZI 80 // Kırmızı pozisyon
 #define POS_MAVI 120   // Mavi pozisyon
-#define POS_YESIL 180  // Yeşil pozisyon             
+#define POS_YESIL 0  // Yeşil pozisyon             
 
 LoRa_E22 E22(&Serial2, LORA_AUX, LORA_M0, LORA_M1);
 
@@ -92,8 +92,14 @@ float roll_offset = 0.0;
 float yaw_offset = 0.0;
 bool mpu_calibrated = false;
 
-// SD kart durumu
+// Sensör durumları
+bool bmp_status = false;
+bool mpu_status = false;
+bool rtc_status = false;
+bool gps_status = false;
 bool sd_status = false;
+bool adc_status = false;
+bool lora_status = false;
 
 // Servo kontrolü için yardımcı fonksiyonlar
 void initServos() {
@@ -267,24 +273,11 @@ void updateRHRH() {
 // Manuel işlem fonksiyonları
 void manuelAyrilma() {
   
-  // 2 saniye bekle
-  unsigned long start_time = millis();
-  while (millis() - start_time < 2000) {
-    delay(10);
-  }
-  
   // Manuel ayrılma değerini sıfırla
   current_manuel_ayrilma = 0;
 }
 
 void manuelBirlesme() {
-  
-  // 2 saniye bekle
-  unsigned long start_time = millis();
-  while (millis() - start_time < 2000) {
-    delay(10);
-  }
-  
   // Manuel ayrılma değerini sıfırla
   current_manuel_ayrilma = 0;
 }
@@ -329,12 +322,31 @@ float calculateDescentRate(float current_altitude, unsigned long current_time) {
 
 // RTC'den Unix timestamp alma fonksiyonu
 uint32_t getRTCUnixTime() {
+  if (!rtc_status) {
+    // RTC aktif değilse millis() bazlı bir timestamp döndür
+    return (millis() / 1000) + 1751328000; // 6 Temmuz 2025'ten itibaren saniye
+  }
+  
   DateTime now = rtc.now();
-  return now.unixtime();
+  uint32_t timestamp = now.unixtime();
+  
+  // Mantıklı bir tarih aralığında olup olmadığını kontrol et
+  if (timestamp < 1751328000 || timestamp > 1782864000) { // 2025-2026 arası
+    Serial.println("RTC zaman hatasi - millis() bazli zaman kullaniliyor");
+    rtc_status = false;
+    return (millis() / 1000) + 1751328000; // 6 Temmuz 2025'ten itibaren
+  }
+  
+  return timestamp;
 }
 
 // RTC tarih/saat bilgisi alma fonksiyonu
 void printRTCDateTime() {
+  if (!rtc_status) {
+    Serial.println("RTC aktif degil - zaman bilgisi alinamadi");
+    return;
+  }
+  
   DateTime now = rtc.now();
   Serial.print("RTC Tarih/Saat: ");
   Serial.print(now.day(), DEC);
@@ -434,36 +446,114 @@ void processSerialCommand() {
   }
 }
 
-void checkSDStatus() {
-  // SD kartın durumunu periyodik olarak kontrol et
-  static unsigned long lastSDCheck = 0;
-  if (millis() - lastSDCheck > 10000) { // Her 10 saniyede bir kontrol et
-    lastSDCheck = millis();
-    
-    if (sd_status) {
-      // SD kart aktifse, dosya erişimi test et
-      if (!SD.exists("/lora1_data.csv")) {
-        Serial.println("SD kart dosyası bulunamadı - yeniden bağlanmaya çalışılıyor...");
-        sd_status = false;
-      }
+// Sensörlerin durumunu kontrol eden fonksiyon
+void sensorControl() {
+  static unsigned long lastSensorCheck = 0;
+  
+  // Her 5 saniyede bir sensör kontrolü yap
+  if (millis() - lastSensorCheck < 5000) {
+    return;
+  }
+  
+  lastSensorCheck = millis();
+  bool status_changed = false;
+  
+  // BMP280 durumunu kontrol et
+  bool old_bmp = bmp_status;
+  float test_pressure = bmp.readPressure();
+  bmp_status = (test_pressure > 0 && test_pressure < 200000); // Mantıklı basınç aralığı (0-200kPa)
+  if (old_bmp != bmp_status) {
+    Serial.print("BMP280 durum degisikliği: ");
+    Serial.println(bmp_status ? "AKTIF" : "HATA");
+    status_changed = true;
+  }
+  
+  // MPU6050 durumunu kontrol et
+  bool old_mpu = mpu_status;
+  sensors_event_t accel, gyro, temp;
+  bool mpu_read_success = mpu.getEvent(&accel, &gyro, &temp);
+  // Accelerometer değerlerinin mantıklı olup olmadığını kontrol et
+  mpu_status = (mpu_read_success && 
+                abs(accel.acceleration.x) < 50 && 
+                abs(accel.acceleration.y) < 50 && 
+                abs(accel.acceleration.z) < 50);
+  if (old_mpu != mpu_status) {
+    Serial.print("MPU6050 durum degisikliği: ");
+    Serial.println(mpu_status ? "AKTIF" : "HATA");
+    status_changed = true;
+  }
+  
+  // RTC durumunu kontrol et
+  bool old_rtc = rtc_status;
+  DateTime now = rtc.now();
+  // RTC'nin mantıklı bir tarih verip vermediğini kontrol et
+  rtc_status = (now.year() >= 2025 && now.year() <= 2027 && 
+                now.month() >= 1 && now.month() <= 12 &&
+                now.day() >= 1 && now.day() <= 31);
+  if (old_rtc != rtc_status) {
+    Serial.print("RTC durum degisikliği: ");
+    Serial.println(rtc_status ? "AKTIF" : "HATA");
+    status_changed = true;
+  }
+  
+  // SD Kart durumunu kontrol et
+  bool old_sd = sd_status;
+  if (sd_status) {
+    // SD kart aktifse, dosya erişimi test et
+    if (!SD.exists("/lora1_data.csv")) {
+      Serial.println("SD kart dosyası bulunamadı - yeniden bağlanmaya çalışılıyor...");
+      sd_status = false;
     }
-    
-    if (!sd_status) {
-      // SD kart aktif değilse yeniden başlatmaya çalış
-      Serial.print("SD kart yeniden bağlanmaya çalışılıyor... ");
-      if (SD.begin(SD_CS)) {
-        sd_status = true;
-        Serial.println("Başarılı!");
-        
-        // CSV dosyası yoksa oluştur
-        if (!SD.exists("/lora1_data.csv")) {
-          writeFile(SD, "/lora1_data.csv", "paket_sayisi,uydu_statusu,hata_kodu,gonderme_saati,basinc1,basinc2,yukseklik1,yukseklik2,irtifa_farki,inis_hizi,sicaklik,pil_gerilimi,gps1_latitude,gps1_longitud,gps1_altitude,pitch,roll,yaw,rhrh,iot_s1_data,iot_s2_data,takim_no\n");
-        }
-      } else {
-        Serial.println("Başarısız");
+  }
+  
+  if (!sd_status) {
+    // SD kart aktif değilse yeniden başlatmaya çalış
+    if (SD.begin(SD_CS)) {
+      sd_status = true;
+      
+      // CSV dosyası yoksa oluştur
+      if (!SD.exists("/lora1_data.csv")) {
+        writeFile(SD, "/lora1_data.csv", "paket_sayisi,uydu_statusu,hata_kodu,gonderme_saati,basinc1,basinc2,yukseklik1,yukseklik2,irtifa_farki,inis_hizi,sicaklik,pil_gerilimi,gps1_latitude,gps1_longitud,gps1_altitude,pitch,roll,yaw,rhrh,iot_s1_data,iot_s2_data,takim_no\n");
       }
     }
   }
+  
+  if (old_sd != sd_status) {
+    Serial.print("SD Kart durum degisikli: ");
+    Serial.println(sd_status ? "AKTIF" : "HATA");
+    status_changed = true;
+  }
+  
+  // LoRa durumunu kontrol et
+  bool old_lora = lora_status;
+  // LoRa modülünün haberleşme durumunu kontrol et
+  ResponseStructContainer c = E22.getConfiguration();
+  lora_status = (c.status.code == 1); // Başarılı yanıt alındıysa LoRa aktif
+  c.close();
+  
+  if (old_lora != lora_status) {
+    Serial.print("LoRa durum degisikli: ");
+    Serial.println(lora_status ? "AKTIF" : "HATA");
+    status_changed = true;
+  }
+  
+  // Durum değişikliği olduysa genel sensor durumunu yazdır
+  if (status_changed) {
+    Serial.println("\n=== SENSOR DURUMLARI ===");
+    Serial.print("BMP280: "); Serial.println(bmp_status ? "AKTIF" : "HATA");
+    Serial.print("MPU6050: "); Serial.println(mpu_status ? "AKTIF" : "HATA");
+    Serial.print("RTC: "); Serial.println(rtc_status ? "AKTIF" : "HATA");
+    Serial.print("SD Kart: "); Serial.println(sd_status ? "AKTIF" : "HATA");
+    Serial.print("LoRa: "); Serial.println(lora_status ? "AKTIF" : "HATA");
+    Serial.print("GPS: "); Serial.println(gps_status ? "AKTIF" : "DEVRE DISI");
+    Serial.print("ADC: "); Serial.println(adc_status ? "AKTIF" : "DEVRE DISI");
+    Serial.println("========================\n");
+  }
+}
+
+void checkSDStatus() {
+  // Bu fonksiyon artık sensorControl() içinde çalışıyor
+  // Geriye uyumluluk için boş bırakıldı
 }
 
 // SD Kart fonksiyonları
@@ -516,11 +606,17 @@ void saveToSD(TelemetryPacket data, float bmp_pressure, float bmp_temperature) {
   decodeRHRH(data.rhrh, rhrh_str);
   
   // Timestamp'i okunabilir formata çevir
-  DateTime now = rtc.now();
   char timestamp_str[20];
-  sprintf(timestamp_str, "%02d.%02d.%04d:%02d.%02d.%02d", 
-          now.day(), now.month(), now.year(), 
-          now.hour(), now.minute(), now.second());
+  if (rtc_status) {
+    DateTime now = rtc.now();
+    sprintf(timestamp_str, "%02d.%02d.%04d:%02d.%02d.%02d", 
+            now.day(), now.month(), now.year(), 
+            now.hour(), now.minute(), now.second());
+  } else {
+    // RTC aktif değilse millis() bazlı timestamp kullan
+    unsigned long mil = millis();
+    sprintf(timestamp_str, "MILLIS:%lu", mil);
+  }
   
   // CSV satırını belirtilen sırayla oluştur
   String csvLine = String(data.paket_sayisi) + "," +                    // paket_sayisi
@@ -596,8 +692,26 @@ void loadLastPacketNumber() {
 
 // MPU6050'den açı değerlerini oku
 void readMPU6050() {
+  // MPU6050 aktif değilse varsayılan değerleri kullan
+  if (!mpu_status) {
+    pitch = 0.0;
+    roll = 0.0;
+    yaw = 0.0;
+    return;
+  }
+  
   sensors_event_t accel, gyro, temp;
-  mpu.getEvent(&accel, &gyro, &temp);
+  bool read_success = mpu.getEvent(&accel, &gyro, &temp);
+  
+  // Okuma başarısızsa varsayılan değerleri kullan
+  if (!read_success) {
+    Serial.println("MPU6050 okuma hatasi - varsayilan degerler kullaniliyor");
+    pitch = 0.0;
+    roll = 0.0;
+    yaw = 0.0;
+    mpu_status = false; // Status'u güncelle
+    return;
+  }
   
   // Accelerometer verilerinden ham pitch ve roll hesapla
   float raw_pitch = atan2(accel.acceleration.y, sqrt(accel.acceleration.x * accel.acceleration.x + accel.acceleration.z * accel.acceleration.z)) * 180.0 / PI;
@@ -726,10 +840,12 @@ void setup() {
   // BMP280 sensörünü başlat
   Wire.begin(21, 22); // SDA=21, SCL=22 (ESP32 default)
   if (!bmp.begin(0x76)) {  // BMP280 I2C adresi genellikle 0x76 veya 0x77
-    Serial.println("BMP280 sensor bulunamadi!");
-    while(1); // Program dur
+    Serial.println("BMP280 sensor bulunamadi! - Program devam ediyor...");
+    bmp_status = false;
+  } else {
+    bmp_status = true;
+    Serial.println("BMP280 sensor baslatildi");
   }
-  Serial.println("BMP280 sensor baslatildi");
   
   // MPU6050 sensörünü başlat
   Serial.println("MPU6050 baslatiluyor...");
@@ -750,19 +866,30 @@ void setup() {
     // MPU6050'yi varsayılan adresle dene
     Serial.println("MPU6050 0x68 adresi ile deneniyor...");
     if (!mpu.begin(0x68)) {
-      Serial.println("MPU6050 hala bulunamadi!");
-      while(1); // Program dur
+      Serial.println("MPU6050 hala bulunamadi! - Program devam ediyor...");
+      mpu_status = false;
+    } else {
+      mpu_status = true;
     }
+  } else {
+    mpu_status = true;
   }
-  Serial.println("MPU6050 sensor baslatildi");
+  
+  if (mpu_status) {
+    Serial.println("MPU6050 sensor baslatildi");
+  } else {
+    Serial.println("MPU6050 sensoru devre disi");
+  }
   
   // DS3231 RTC modülünü başlat
   Serial.println("DS3231 RTC baslatiluyor...");
   if (!rtc.begin()) {
-    Serial.println("DS3231 RTC bulunamadi!");
-    while(1); // Program dur
+    Serial.println("DS3231 RTC bulunamadi! - Program devam ediyor...");
+    rtc_status = false;
+  } else {
+    rtc_status = true;
+    Serial.println("DS3231 RTC baslatildi");
   }
-  Serial.println("DS3231 RTC baslatildi");
   
   // RTC zamanını kontrol et
   if (rtc.lostPower()) {
@@ -774,7 +901,7 @@ void setup() {
   // Mevcut RTC zamanını göster
   printRTCDateTime();
   Serial.println("RTC tarih/saat ayarlamak icin 'SET DD,MM,YY,HH,MM,SS' komutunu kullanin");
-  Serial.println("Ornek: SET 06,08,25,17,25,00 (6 Agustos 2025, 17:25:00)");
+  Serial.println("Ornek: SET 06,07,25,17,25,00 (6 Temmuz 2025, 17:25:00)");
   
   // MPU6050 ayarları
   mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
@@ -800,6 +927,7 @@ void setup() {
   
   E22.begin();
   configureLoRa();
+  lora_status = true; // LoRa başarıyla başlatıldı
   Serial.println("LORA 1 - Ana Kontrol Merkezi baslatildi");
   
   // Başlangıç RHRH değerini göster
@@ -820,19 +948,52 @@ void setup() {
   
   printModuleInfo();
   printConfig();
+  
+  // Başlangıç sensör durumlarını göster
+  Serial.println("\n=== BASLANGIC SENSOR DURUMLARI ===");
+  Serial.print("BMP280: "); Serial.println(bmp_status ? "AKTIF" : "HATA");
+  Serial.print("MPU6050: "); Serial.println(mpu_status ? "AKTIF" : "HATA");
+  Serial.print("RTC: "); Serial.println(rtc_status ? "AKTIF" : "HATA");
+  Serial.print("SD Kart: "); Serial.println(sd_status ? "AKTIF" : "HATA");
+  Serial.print("LoRa: "); Serial.println(lora_status ? "AKTIF" : "HATA");
+  Serial.print("GPS: "); Serial.println(gps_status ? "AKTIF" : "DEVRE DISI");
+  Serial.print("ADC: "); Serial.println(adc_status ? "AKTIF" : "DEVRE DISI");
+  Serial.println("==================================\n");
+  
   delay(500);
 }
 
 void sendTelemetryToLora2() {
-  // MPU6050'den açı değerlerini oku
+  // MPU6050'den açı değerlerini oku (hata kontrolü içinde)
   readMPU6050();
   
   // Binary telemetry paketi oluştur
   TelemetryPacket telemetry;
 
-  // BMP280'den basınç ve sıcaklık verilerini oku
-  float bmp_basinc = bmp.readPressure(); // Pascal cinsinden
-  float bmp_sicaklik = bmp.readTemperature(); // Celsius cinsinden
+  // BMP280'den basınç ve sıcaklık verilerini oku (hata kontrolü ile)
+  float bmp_basinc = 0.0;
+  float bmp_sicaklik = 0.0;
+  
+  if (bmp_status) {
+    bmp_basinc = bmp.readPressure(); // Pascal cinsinden
+    bmp_sicaklik = bmp.readTemperature(); // Celsius cinsinden
+    
+    // Okunan değerlerin mantıklı olup olmadığını kontrol et
+    if (bmp_basinc <= 0 || bmp_basinc > 200000 || isnan(bmp_basinc)) {
+      Serial.println("BMP280 basinc okuma hatasi - varsayilan deger kullaniliyor");
+      bmp_basinc = 101325.0; // Deniz seviyesi basıncı
+      bmp_status = false; // Status'u güncelle
+    }
+    
+    if (isnan(bmp_sicaklik) || bmp_sicaklik < -50 || bmp_sicaklik > 100) {
+      Serial.println("BMP280 sicaklik okuma hatasi - varsayilan deger kullaniliyor");
+      bmp_sicaklik = 25.0; // Oda sıcaklığı
+    }
+  } else {
+    // BMP280 aktif değilse varsayılan değerleri kullan
+    bmp_basinc = 101325.0; // Deniz seviyesi basıncı
+    bmp_sicaklik = 25.0; // Oda sıcaklığı
+  }
 
   // İlk okuma ise referans basınç değerlerini kaydet
   if (!basinc_kalibrasyonu) {
@@ -1046,10 +1207,13 @@ bool waitForMessage(unsigned long timeout_ms) {
 void loop() {
   Serial.println("=== COMM LOOP BASLADI ===");
   
+  // Sensör durumlarını kontrol et
+  sensorControl();
+  
   // Serial komutları kontrol et
   processSerialCommand();
   
-  // SD kart durumunu kontrol et
+  // SD kart durumunu kontrol et (artık sensorControl içinde)
   checkSDStatus();
   
   // RHRH işlemini güncelle
