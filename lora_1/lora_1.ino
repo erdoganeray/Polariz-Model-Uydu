@@ -8,6 +8,7 @@
 #include <SD.h>
 #include <FS.h>
 #include <SPI.h>
+#include <ESP32Servo.h>
 #include "../binary_protocol.h"
 
 #define LORA_M0 13
@@ -33,10 +34,6 @@
 #define SERVO1_PIN 33
 #define SERVO2_PIN 25
 
-// LEDC servo kontrolü için ayarlar
-#define SERVO_FREQ 50      // 50Hz servo frekansı
-#define SERVO_RESOLUTION 16 // 16-bit çözünürlük
-
 // Renk pozisyonları (derece cinsinden)
 #define POS_BOS 40      // Boş pozisyon
 #define POS_KIRMIZI 80 // Kırmızı pozisyon
@@ -53,6 +50,10 @@ Adafruit_MPU6050 mpu;
 
 // DS3231 RTC modülü
 RTC_DS3231 rtc;
+
+// Servo motorlar
+Servo servo1;
+Servo servo2;
 
 uint16_t paket_sayisi_lora2 = 1;
 uint16_t paket_sayisi_lora3 = 1;
@@ -107,16 +108,9 @@ bool lora_status = false;
 
 // Servo kontrolü için yardımcı fonksiyonlar
 void initServos() {
-  // Yeni ESP32 Arduino Core için LEDC kanallarını servo kontrolü için ayarla
-  ledcAttach(SERVO1_PIN, SERVO_FREQ, SERVO_RESOLUTION);
-  ledcAttach(SERVO2_PIN, SERVO_FREQ, SERVO_RESOLUTION);
-}
-
-// Açıyı PWM değerine çeviren fonksiyon
-uint32_t angleToMicroseconds(int angle) {
-  // Servo açısını mikrosaniye cinsinden PWM değerine çevir
-  // 0° = 1000μs, 180° = 2000μs
-  return map(angle, 0, 180, 1000, 2000);
+  // Servo motorları attach et
+  servo1.attach(SERVO1_PIN);
+  servo2.attach(SERVO2_PIN);
 }
 
 // Servo pozisyon ayarlama fonksiyonu
@@ -124,16 +118,12 @@ void writeServo(int pin, int angle) {
   // Açıyı sınırla (0-180 derece)
   angle = constrain(angle, 0, 180);
   
-  // Mikrosaniye değerini hesapla
-  uint32_t microseconds = angleToMicroseconds(angle);
-  
-  // PWM duty cycle'ı hesapla (16-bit çözünürlük için)
-  // PWM periyodu = 1/50Hz = 20ms = 20000μs
-  // Duty cycle = (pulse_width / period) * (2^resolution - 1)
-  uint32_t duty = (microseconds * ((1 << SERVO_RESOLUTION) - 1)) / 20000;
-  
-  // PWM sinyalini uygula (yeni API)
-  ledcWrite(pin, duty);
+  // İlgili servo motoruna açıyı yaz
+  if (pin == SERVO1_PIN) {
+    servo1.write(angle);
+  } else if (pin == SERVO2_PIN) {
+    servo2.write(angle);
+  }
 }
 
 // Servo pozisyon ayarlama fonksiyonu
@@ -445,6 +435,37 @@ void processSerialCommand() {
         }
       } else {
         Serial.println("SD kart aktif değil");
+      }
+    }
+    // SERVO komutunu kontrol et (format: SERVO angle1 angle2)
+    else if (command.startsWith("SERVO ")) {
+      String servoParams = command.substring(6); // "SERVO " kısmını atla
+      
+      // Boşluklarla ayrılmış değerleri parse et
+      int spaceIndex = servoParams.indexOf(' ');
+      if (spaceIndex > 0) {
+        int angle1 = servoParams.substring(0, spaceIndex).toInt();
+        int angle2 = servoParams.substring(spaceIndex + 1).toInt();
+        
+        // Açı değerlerini kontrol et (0-180 derece arası)
+        if (angle1 >= 0 && angle1 <= 180 && angle2 >= 0 && angle2 <= 180) {
+          // Servo pozisyonlarını ayarla
+          writeServo(SERVO1_PIN, angle1);
+          writeServo(SERVO2_PIN, angle2);
+          
+          Serial.print("Servo pozisyonları manuel olarak ayarlandı - Servo1: ");
+          Serial.print(angle1);
+          Serial.print("°, Servo2: ");
+          Serial.print(angle2);
+          Serial.println("°");
+        } else {
+          Serial.println("Hata: Servo açı değerleri 0-180 derece arasında olmalıdır!");
+          Serial.println("Kullanım: SERVO angle1 angle2");
+          Serial.println("Örnek: SERVO 90 45");
+        }
+      } else {
+        Serial.println("Hata: Geçersiz format! Kullanım: SERVO angle1 angle2");
+        Serial.println("Örnek: SERVO 90 45");
       }
     }
   }
@@ -858,6 +879,12 @@ void setup() {
   delay(500);
   Serial2.begin(9600, SERIAL_8N1, LORA_RX, LORA_TX);
   
+  // ESP32Servo için timer ayarla
+  ESP32PWM::allocateTimer(0);
+  ESP32PWM::allocateTimer(1);
+  ESP32PWM::allocateTimer(2);
+  ESP32PWM::allocateTimer(3);
+  
   // Servo motorları başlat
   initServos();
   
@@ -977,6 +1004,7 @@ void setup() {
   Serial.println("SET DD,MM,YY,HH,MM,SS - RTC tarih/saat ayarla");
   Serial.println("SD_STATUS - SD kart durumu goruntule");
   Serial.println("SD_TEST - SD kart test dosyası yaz");
+  Serial.println("SERVO angle1 angle2 - Servo motor acılarını ayarla (0-180°)");
   Serial.println("===============================");
   Serial.println();
   
@@ -1288,6 +1316,17 @@ void loop() {
       waitForMessage(100); // Kısa timeout ile mesaj işle
     }
     delay(10); // Buffer yönetimi için kısa bekleme
+  }
+  
+  // Pil gerilimini göster
+  int adcValue = analogRead(PIL_GERILIMI_PIN);
+  if (adcValue >= 0 && adcValue <= 4095) {
+    float voltage = (adcValue * 3.3) / 4096.0;
+    uint16_t pil_gerilimi = (uint16_t)(voltage * 100);
+    Serial.print("Pil Gerilimi: ");
+    Serial.println(pil_gerilimi);
+  } else {
+    Serial.println("Pil Gerilimi: ADC Okuma Hatasi");
   }
   
   Serial.println("=== COMM LOOP TAMAMLANDI ===");
