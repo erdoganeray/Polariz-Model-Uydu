@@ -47,6 +47,10 @@ class CameraWidget(QLabel):
         self.is_recording = False
         self.recording_start_time = None
         
+        # Frame okuma hata sayacı
+        self.frame_error_count = 0
+        self.max_frame_errors = 10  # 10 ardışık hata sonra reconnect
+        
         # Data klasör yolu
         self.data_dir = os.path.join(os.path.dirname(__file__), "data")
         os.makedirs(self.data_dir, exist_ok=True)
@@ -72,40 +76,151 @@ class CameraWidget(QLabel):
         
     def find_usb_camera(self):
         """USB video yakalama cihazını otomatik olarak bul"""
-        # Birden fazla kamera indexini dene (0-10 arası)
-        for index in range(11):
-            cap = cv2.VideoCapture(index)
-            if cap.isOpened():
-                # Kamera özelliklerini kontrol et
-                ret, frame = cap.read()
-                if ret and frame is not None:
-                    self.camera_index = index
-                    self.camera = cap
-                    self.setText(f"Kamera Bulundu (Index: {index})")
-                    print(f"USB Kamera bulundu: Index {index}")
-                    break
-                cap.release()
+        # Öncelikle USB kameralarını ara (index 1'den başla, 0 genellikle laptop kamerası)
+        usb_camera_found = False
+        
+        # Önce USB kameraları ara (index 1-10)
+        for index in range(1, 11):
+            try:
+                # USB kameralar için DirectShow backend kullan (MSMF sorunlarını önlemek için)
+                cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+                if not cap.isOpened():
+                    # DirectShow ile açılamazsa varsayılan backend dene
+                    cap = cv2.VideoCapture(index)
+                
+                if cap.isOpened():
+                    # Kamera özelliklerini kontrol et
+                    ret, frame = cap.read()
+                    
+                    if ret and frame is not None:
+                        self.camera_index = index
+                        self.camera = cap
+                        self.setText(f"USB Kamera (Index: {index})")
+                        print(f"USB Kamera bulundu: Index {index}")
+                        usb_camera_found = True
+                        break
+                    else:
+                        cap.release()
+                else:
+                    cap.release()
+            except Exception as e:
+                try:
+                    cap.release()
+                except:
+                    pass
+        
+        # USB kamera bulunamazsa, laptop kamerasını dene (index 0)
+        if not usb_camera_found:
+            try:
+                cap = cv2.VideoCapture(0)
+                
+                if cap.isOpened():
+                    ret, frame = cap.read()
+                    
+                    if ret and frame is not None:
+                        self.camera_index = 0
+                        self.camera = cap
+                        self.setText(f"Laptop Kamerası (Index: 0)")
+                        print("Laptop kamerası kullanılıyor: Index 0")
+                    else:
+                        cap.release()
+                else:
+                    cap.release()
+            except Exception as e:
+                pass
         
         if self.camera_index == -1:
             self.setText("USB Kamera\nBulunamadı")
-            print("USB video yakalama cihazı bulunamadı")
+            print("Video yakalama cihazı bulunamadı")
         else:
             self.start_camera()
+    
+    def check_for_usb_camera(self):
+        """USB kamera girişi kontrolü - laptop kamerasından USB kameraya geçiş için"""
+        # Sadece laptop kamerası aktifse USB kamera ara
+        if self.camera_index == 0:
+            # USB kameraları kontrol et (index 1-10)
+            for index in range(1, 11):
+                try:
+                    cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+                    if not cap.isOpened():
+                        cap = cv2.VideoCapture(index)
+                    
+                    if cap.isOpened():
+                        # Kameranın gerçekten çalışıp çalışmadığını test et
+                        ret, frame = cap.read()
+                        if ret and frame is not None:
+                            print(f"Yeni USB kamera bulundu: Index {index}, geçiş yapılıyor...")
+                            # Mevcut kamerayı durdur
+                            self.stop_camera()
+                            # USB kameranın hazır olması için bekle
+                            time.sleep(0.5)
+                            # Yeni kamerayı başlat
+                            self.camera_index = index
+                            self.camera = cap
+                            self.setText(f"USB Kamera (Index: {index})")
+                            self.start_camera()
+                            print(f"USB kameraya geçiş tamamlandı: Index {index}")
+                            return True
+                        else:
+                            cap.release()
+                    else:
+                        cap.release()
+                except Exception as e:
+                    try:
+                        cap.release()
+                    except:
+                        pass
+        return False
     
     def start_camera(self):
         """Kamera görüntü akışını başlat"""
         if self.camera and self.camera.isOpened():
+            # Hata sayacını sıfırla
+            self.frame_error_count = 0
+            
+            # USB kamera için MSMF backend sorunlarını önlemek amacıyla CAP_DSHOW kullan
+            if self.camera_index > 0:
+                # Mevcut kamerayı kapat
+                self.camera.release()
+                # DirectShow backend ile yeniden aç (MSMF yerine)
+                self.camera = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+                if not self.camera.isOpened():
+                    self.camera = cv2.VideoCapture(self.camera_index)
+            
+            # Kamera açık mı kontrol et
+            if not self.camera.isOpened():
+                self.setText("USB Kamera\nAçılamadı")
+                return
+            
             # Kamera çözünürlüğünü ayarla
             self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             self.camera.set(cv2.CAP_PROP_FPS, 30)
+            
+            # Frame test et
+            ret, test_frame = self.camera.read()
+            if ret and test_frame is not None:
+                print(f"Kamera başarıyla başlatıldı: Index {self.camera_index}")
+            else:
+                print("USB kamera frame hatası - laptop kamerasına dönülüyor...")
+                # USB kamera çalışmıyorsa laptop kamerasına dön
+                self.camera.release()
+                self.camera = cv2.VideoCapture(0)
+                self.camera_index = 0
+                self.setText("Laptop Kamerası (USB hatası)")
+            
+            # USB kamera için ek stabilite beklemesi
+            if self.camera_index > 0:
+                time.sleep(0.5)
             
             # Video kaydını başlat
             self.start_recording()
             
             # Timer'ı başlat (30 FPS için ~33ms)
             self.timer.start(33)
-            print(f"Kamera başlatıldı: {self.camera_index}")
+        else:
+            self.setText("Kamera Hatası")
     
     def start_recording(self):
         """Video kaydını başlat"""
@@ -138,6 +253,9 @@ class CameraWidget(QLabel):
         if self.camera and self.camera.isOpened():
             ret, frame = self.camera.read()
             if ret and frame is not None:
+                # Frame başarıyla okundu, hata sayacını sıfırla
+                self.frame_error_count = 0
+                
                 # Video kaydı aktifse frame'i kaydet
                 if self.is_recording and self.video_writer:
                     self.video_writer.write(frame)
@@ -164,11 +282,25 @@ class CameraWidget(QLabel):
                 
                 self.setPixmap(scaled_pixmap)
             else:
-                # Frame okunamıyorsa bağlantıyı yeniden dene
+                # Frame okunamadı, hata sayacını artır
+                self.frame_error_count += 1
+                
+                # Sadece çok fazla ardışık hata olursa reconnect yap
+                if self.frame_error_count >= self.max_frame_errors:
+                    print(f"Çok fazla frame hatası, kamera yeniden bağlanıyor... (Index {self.camera_index})")
+                    self.reconnect_camera()
+        else:
+            self.frame_error_count += 1
+            if self.frame_error_count >= self.max_frame_errors:
+                print("Kamera erişim hatası, yeniden bağlanıyor...")
                 self.reconnect_camera()
     
     def reconnect_camera(self):
         """Kamera bağlantısını yeniden kur"""
+        print("Kamera yeniden bağlanıyor...")
+        # Hata sayacını sıfırla
+        self.frame_error_count = 0
+        
         if self.camera:
             self.camera.release()
         
@@ -1055,6 +1187,11 @@ class GroundStationGUI(QMainWindow):
         self.model_timer.timeout.connect(self.update_3d_model)
         self.model_timer.start(100)
         
+        # USB kamera kontrol timer'ı (2 saniyede bir)
+        self.camera_check_timer = QTimer()
+        self.camera_check_timer.timeout.connect(self.check_usb_camera)
+        self.camera_check_timer.start(2000)  # Her 2 saniyede kontrol et
+        
     def update_data(self):
         """Verileri güncelleme - sadece simülasyon için değil gerçek veri gelirse durdur"""
         # Simülasyon kaldırıldı - sadece gerçek COM verisiyle çalışacak
@@ -1099,6 +1236,14 @@ class GroundStationGUI(QMainWindow):
             self.telemetry_data.roll, 
             self.telemetry_data.yaw
         )
+        
+    def check_usb_camera(self):
+        """USB kamera girişi kontrolü - her 2 saniyede çalışır"""
+        if self.camera_widget:
+            result = self.camera_widget.check_for_usb_camera()
+            if result:
+                # USB kameraya geçiş başarılı
+                self.add_log_message("USB kamera algılandı ve geçiş yapıldı")
         
     def update_error_display(self):
         """Hata kodu tablosunu güncelleme - HTML tablosu ile"""
@@ -1574,6 +1719,10 @@ class GroundStationGUI(QMainWindow):
         """Uygulama kapatılırken çağrılan fonksiyon"""
         if self.is_listening:
             self.stop_listening()
+        
+        # Timer'ları durdur
+        if hasattr(self, 'camera_check_timer'):
+            self.camera_check_timer.stop()
         
         # CSV kaydetme durdur
         self.stop_csv_logging()
