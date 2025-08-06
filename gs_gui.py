@@ -569,23 +569,24 @@ class GroundStationGUI(QMainWindow):
                     'data_x': [],
                     'data_y1': [],  # İlk çizgi verisi
                     'data_y2': [],  # İkinci çizgi verisi
-                    'curve1': plot_widget.plot(pen={'color': '#0d6efd', 'width': 2}),  # Mavi çizgi
-                    'curve2': plot_widget.plot(pen={'color': '#dc3545', 'width': 2})   # Kırmızı çizgi
                 }
                 
-                # Legend ekleme
+                # Legend ekleme ve curve oluşturma
                 if graph_id == 'pressure':
                     plot_widget.addLegend()
-                    self.graphs[graph_id]['curve1'].setData(name='Yük (Basınç1)')
-                    self.graphs[graph_id]['curve2'].setData(name='Taşıyıcı (Basınç2)')
+                    # Legend için isimler curve oluşturulurken verilir
+                    self.graphs[graph_id]['curve1'] = plot_widget.plot(pen={'color': '#0d6efd', 'width': 2}, name='Yük (Basınç1)')
+                    self.graphs[graph_id]['curve2'] = plot_widget.plot(pen={'color': '#dc3545', 'width': 2}, name='Taşıyıcı (Basınç2)')
                 elif graph_id == 'altitude':
                     plot_widget.addLegend()
-                    self.graphs[graph_id]['curve1'].setData(name='Yük (Yükseklik1)')
-                    self.graphs[graph_id]['curve2'].setData(name='Taşıyıcı (Yükseklik2)')
+                    # Legend için isimler curve oluşturulurken verilir
+                    self.graphs[graph_id]['curve1'] = plot_widget.plot(pen={'color': '#0d6efd', 'width': 2}, name='Yük (Yükseklik1)')
+                    self.graphs[graph_id]['curve2'] = plot_widget.plot(pen={'color': '#dc3545', 'width': 2}, name='Taşıyıcı (Yükseklik2)')
                 elif graph_id == 'iot_temp':
                     plot_widget.addLegend()
-                    self.graphs[graph_id]['curve1'].setData(name='IoT Sensor 1')
-                    self.graphs[graph_id]['curve2'].setData(name='IoT Sensor 2')
+                    # Legend için isimler curve oluşturulurken verilir
+                    self.graphs[graph_id]['curve1'] = plot_widget.plot(pen={'color': '#0d6efd', 'width': 2}, name='IoT Sensor 1')
+                    self.graphs[graph_id]['curve2'] = plot_widget.plot(pen={'color': '#dc3545', 'width': 2}, name='IoT Sensor 2')
             else:
                 # Tek çizgili grafikler için mevcut yapı
                 self.graphs[graph_id] = {
