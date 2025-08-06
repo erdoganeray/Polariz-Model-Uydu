@@ -20,6 +20,10 @@
 #define LORA_ADDR_H 0x00
 #define LORA_ADDR_L 0x0A             
 
+#define PIL_GERILIMI_PIN A0
+#define SEPERATION 35
+#define UYDU_STATU 34
+
 // SD Kart SPI pin tanımlamaları
 #define SD_SCK 18
 #define SD_MISO 19
@@ -752,6 +756,32 @@ void readMPU6050() {
   if (yaw >= 360) yaw -= 360.0;
 }
 
+// Buton durumlarını okuma ve yazdırma fonksiyonu
+void checkButtonStates() {
+  static unsigned long lastButtonCheck = 0;
+  static bool lastSeparationState = HIGH;
+  static bool lastUyduStatuState = HIGH;
+  
+  // Her 500ms'de bir buton durumlarını kontrol et
+  if (millis() - lastButtonCheck >= 500) {
+    lastButtonCheck = millis();
+    
+    bool separationState = digitalRead(SEPERATION);
+    bool uyduStatuState = digitalRead(UYDU_STATU);
+    
+    // Durum değişikliği olduysa yazdır
+    if (separationState != lastSeparationState || uyduStatuState != lastUyduStatuState) {
+      Serial.print("BUTON DURUMLARI - SEPERATION: ");
+      Serial.print(separationState == LOW ? "BASILDI" : "BIRAKILDI");
+      Serial.print(", UYDU_STATU: ");
+      Serial.println(uyduStatuState == LOW ? "BASILDI" : "BIRAKILDI");
+      
+      lastSeparationState = separationState;
+      lastUyduStatuState = uyduStatuState;
+    }
+  }
+}
+
 void configureLoRa() {
   Serial.println("\n=== LoRa Konfigürasyonu ===");
   
@@ -830,6 +860,10 @@ void setup() {
   
   // Servo motorları başlat
   initServos();
+  
+  // Pin modlarını ayarla
+  pinMode(SEPERATION, INPUT);
+  pinMode(UYDU_STATU, INPUT);
   
   // Servo motorları başlangıç pozisyonuna getir (boş pozisyon)
   writeServo(SERVO1_PIN, POS_BOS);
@@ -1017,7 +1051,18 @@ void sendTelemetryToLora2() {
   telemetry.basinc1 = bmp_basinc; // BMP280'den gelen basınç
   telemetry.basinc2 = basinc_lora3; // Lora 3'ten gelen basınç
   telemetry.sicaklik = (int16_t)(bmp_sicaklik * 100); // BMP280'den gelen sıcaklık * 100
-  telemetry.pil_gerilimi = 377; // 3.77V * 100
+  
+  // ADC gerilim
+  int adcValue = analogRead(PIL_GERILIMI_PIN);
+  if (adcValue >= 0 && adcValue <= 4095) {
+    float voltage = (adcValue * 3.3) / 4096.0;
+    telemetry.pil_gerilimi = (uint16_t)(voltage * 100);
+    adc_status = true;
+  } else {
+    telemetry.pil_gerilimi = 0;
+    adc_status = false;
+  }
+  
   telemetry.gps1_latitude = 39.123456;
   telemetry.gps1_longitude = 32.654321;
   telemetry.gps1_altitude = 155.20;
@@ -1210,6 +1255,9 @@ void loop() {
   // Sensör durumlarını kontrol et
   sensorControl();
   
+  // Buton durumlarını kontrol et
+  checkButtonStates();
+  
   // Serial komutları kontrol et
   processSerialCommand();
   
@@ -1229,6 +1277,9 @@ void loop() {
   while (millis() - loop_start_time < 950) {
     // Serial komutları kontrol et
     processSerialCommand();
+    
+    // Buton durumlarını kontrol et
+    checkButtonStates();
     
     // RHRH işlemini güncelle
     updateRHRH();

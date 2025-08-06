@@ -1094,7 +1094,7 @@ class GroundStationGUI(QMainWindow):
         left_layout.setContentsMargins(4, 4, 4, 4)  # İç kenar boşlukları
         
         # Sol bölüm bilgileri
-        self.status_label1 = QLabel("Pil Gerilimi: 0.0V (--%)")  # Default 0V
+        self.status_label1 = QLabel("Pil Gerilimi: 0.00V (--%)")  # Default 0V
         self.status_label1.setStyleSheet("font-weight: 500; color: #495057; font-size: 11px; padding: 2px 0px;")
         
         self.status_label2 = QLabel("Statü: 0 (Uçuşa Hazır)")  # Default 0
@@ -1615,11 +1615,11 @@ class GroundStationGUI(QMainWindow):
                     # Pil gerilimi: 4.2V ile 3.3V arasında yüzde hesapla
                     if pil_gerilimi <= 0:
                         # 0V veya negatif değerler için özel durum
-                        self.status_label1.setText("Pil Gerilimi: 0.0V (--%)") 
+                        self.status_label1.setText("Pil Gerilimi: 0.00V (--%)") 
                     else:
                         battery_percent = int((pil_gerilimi - 3.3) / (4.2 - 3.3) * 100)
                         battery_percent = max(0, min(100, battery_percent))  # 0-100 arası sınırla
-                        self.status_label1.setText(f"Pil Gerilimi: {pil_gerilimi:.1f}V ({battery_percent}%)")
+                        self.status_label1.setText(f"Pil Gerilimi: {pil_gerilimi:.2f}V ({battery_percent}%)")
                     
                     # Uydu statusu metni
                     status_texts = {
