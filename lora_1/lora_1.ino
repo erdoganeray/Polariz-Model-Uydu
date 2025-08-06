@@ -1,5 +1,9 @@
 #include <Arduino.h>
 #include <LoRa_E22.h>
+#include <Adafruit_BMP280.h>
+#include <Wire.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
 #include "../binary_protocol.h"
 
 #define LORA_M0 13
@@ -14,24 +18,55 @@
 
 LoRa_E22 E22(&Serial2, LORA_AUX, LORA_M0, LORA_M1);
 
+// BMP280 sensor
+Adafruit_BMP280 bmp;
+
+// MPU6050 sensor
+Adafruit_MPU6050 mpu;
+
 uint16_t paket_sayisi_lora2 = 1;
 uint16_t paket_sayisi_lora3 = 1;
 
 // RHRH değeri - başlangıçta 0000, lora_2'den gelen değerle güncellenecek
 uint32_t current_rhrh = encodeRHRH('0', '0', '0', '0');
 
+// Lora 3'ten gelen basınç değeri
+float basinc_lora3 = 0.00; // Varsayılan değer
+
+// Lora 4 ve 5'ten gelen sıcaklık değerleri 
+int16_t sicaklik_lora4 = 0; // 0°C * 100
+int16_t sicaklik_lora5 = 0; // 0°C * 100
+
 // Yükseklik hesaplama için gerekli değişkenler
 float previous_altitude = 0.0;
 unsigned long previous_time = 0;
 
+// Referans basınç değerleri (ilk okuma)
+float basinc1_referans = 0.0;
+float basinc2_referans = 0.0;
+bool basinc_kalibrasyonu = false;
+
+// MPU6050 için açı değişkenleri
+float pitch = 0.0;
+float roll = 0.0;
+float yaw = 0.0;
+
+// MPU6050 referans değerleri (ilk okuma)
+float pitch_offset = 0.0;
+float roll_offset = 0.0;
+float yaw_offset = 0.0;
+bool mpu_calibrated = false;
+
 // Basınç değerinden yükseklik hesaplama fonksiyonu
-float calculateAltitude(float pressure) {
-  // Deniz seviyesi basıncı (Pa)
-  const float SEA_LEVEL_PRESSURE = 101325.0;
+float calculateAltitude(float pressure, float reference_pressure) {
+  // Referans basınç yoksa veya geçersizse, hesaplama yapma
+  if (reference_pressure <= 0) {
+    return 0.0;
+  }
   
   // Barometrik formül kullanarak yükseklik hesapla
-  // h = 44330 * (1 - (P/P0)^(1/5.255))
-  float altitude = 44330.0 * (1.0 - pow(pressure / SEA_LEVEL_PRESSURE, 1.0/5.255));
+  // h = 44330 * (1 - (P/P_ref)^(1/5.255))
+  float altitude = 44330.0 * (1.0 - pow(pressure / reference_pressure, 1.0/5.255));
   
   return altitude;
 }
@@ -58,6 +93,50 @@ float calculateDescentRate(float current_altitude, unsigned long current_time) {
   }
   
   return 0.0;
+}
+
+// MPU6050'den açı değerlerini oku
+void readMPU6050() {
+  sensors_event_t accel, gyro, temp;
+  mpu.getEvent(&accel, &gyro, &temp);
+  
+  // Accelerometer verilerinden ham pitch ve roll hesapla
+  float raw_pitch = atan2(accel.acceleration.y, sqrt(accel.acceleration.x * accel.acceleration.x + accel.acceleration.z * accel.acceleration.z)) * 180.0 / PI;
+  float raw_roll = atan2(-accel.acceleration.x, accel.acceleration.z) * 180.0 / PI;
+  
+  // Gyroscope verilerinden ham yaw değerini al (basit integrasyon)
+  static float yaw_rate = 0.0;
+  static unsigned long last_time = 0;
+  unsigned long current_time = millis();
+  
+  if (last_time != 0) {
+    float dt = (current_time - last_time) / 1000.0; // saniye cinsinden
+    yaw_rate += gyro.gyro.z * dt * 180.0 / PI; // rad/s'yi derece/s'ye çevir
+  }
+  
+  last_time = current_time;
+  
+  // İlk okuma ise offset değerlerini kaydet
+  if (!mpu_calibrated) {
+    pitch_offset = raw_pitch;
+    roll_offset = raw_roll;
+    yaw_offset = yaw_rate;
+    mpu_calibrated = true;
+    Serial.println("MPU6050 referans degerler kaydedildi (ilk okuma sifir kabul edildi)");
+    Serial.print("Pitch offset: "); Serial.println(pitch_offset);
+    Serial.print("Roll offset: "); Serial.println(roll_offset);
+    Serial.print("Yaw offset: "); Serial.println(yaw_offset);
+  }
+  
+  // Offset değerlerini çıkararak gerçek açıları hesapla
+  pitch = raw_pitch - pitch_offset;
+  roll = raw_roll - roll_offset;
+  float raw_yaw = yaw_rate - yaw_offset;
+  
+  // Yaw değerini 0-360 derece arasında tut
+  yaw = raw_yaw;
+  if (yaw < 0) yaw += 360.0;
+  if (yaw >= 360) yaw -= 360.0;
 }
 
 void configureLoRa() {
@@ -135,6 +214,54 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial2.begin(9600, SERIAL_8N1, LORA_RX, LORA_TX);
+  
+  // BMP280 sensörünü başlat
+  Wire.begin(21, 22); // SDA=21, SCL=22 (ESP32 default)
+  if (!bmp.begin(0x76)) {  // BMP280 I2C adresi genellikle 0x76 veya 0x77
+    Serial.println("BMP280 sensor bulunamadi!");
+    while(1); // Program dur
+  }
+  Serial.println("BMP280 sensor baslatildi");
+  
+  // MPU6050 sensörünü başlat
+  Serial.println("MPU6050 baslatiluyor...");
+  if (!mpu.begin(0x69)) {  // Test kodunda çalışan adres
+    Serial.println("MPU6050 sensor bulunamadi! I2C adreslerini kontrol ediliyor...");
+    
+    // I2C adreslerini tara
+    Serial.println("I2C adres taramasi:");
+    for (byte address = 1; address < 127; address++) {
+      Wire.beginTransmission(address);
+      if (Wire.endTransmission() == 0) {
+        Serial.print("I2C cihaz bulundu: 0x");
+        if (address < 16) Serial.print("0");
+        Serial.println(address, HEX);
+      }
+    }
+    
+    // MPU6050'yi varsayılan adresle dene
+    Serial.println("MPU6050 0x68 adresi ile deneniyor...");
+    if (!mpu.begin(0x68)) {
+      Serial.println("MPU6050 hala bulunamadi!");
+      while(1); // Program dur
+    }
+  }
+  Serial.println("MPU6050 sensor baslatildi");
+  
+  // MPU6050 ayarları
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+  Serial.println("MPU6050 konfigurasyonu tamamlandi");
+  
+  // MPU6050 ilk kalibrasyonu için bekleme
+  Serial.println("MPU6050 kalibrasyon icin 1 saniye bekleniyor...");
+  delay(1000);
+  
+  // İlk okuma yaparak referans değerleri ayarla
+  readMPU6050();
+  Serial.println("MPU6050 referans kalibrasyonu tamamlandi");
+  
   E22.begin();
   configureLoRa();
   Serial.println("LORA 1 - Ana Kontrol Merkezi baslatildi");
@@ -153,32 +280,53 @@ void setup() {
 }
 
 void sendTelemetryToLora2() {
+  // MPU6050'den açı değerlerini oku
+  readMPU6050();
+  
   // Binary telemetry paketi oluştur
   TelemetryPacket telemetry;
+
+  // BMP280'den basınç ve sıcaklık verilerini oku
+  float bmp_basinc = bmp.readPressure(); // Pascal cinsinden
+  float bmp_sicaklik = bmp.readTemperature(); // Celsius cinsinden
+
+  // İlk okuma ise referans basınç değerlerini kaydet
+  if (!basinc_kalibrasyonu) {
+    basinc1_referans = bmp_basinc;
+    if (basinc_lora3 > 0) { // Lora3'ten veri gelmişse onu da referans olarak kaydet
+      basinc2_referans = basinc_lora3;
+    } else {
+      basinc2_referans = bmp_basinc; // Henüz veri gelmemişse aynı değeri kullan
+    }
+    basinc_kalibrasyonu = true;
+    Serial.println("Basinc referans degerleri kaydedildi (ilk okuma sifir yukseklik kabul edildi)");
+    Serial.print("Basinc1 referans: "); Serial.print(basinc1_referans); Serial.println(" Pa");
+    Serial.print("Basinc2 referans: "); Serial.print(basinc2_referans); Serial.println(" Pa");
+  }
 
   telemetry.packet_type = PACKET_TYPE_TELEMETRY;
   telemetry.paket_sayisi = paket_sayisi_lora2;
   telemetry.uydu_statusu = 5;
   telemetry.hata_kodu = 0b010101; // 010101 binary (6 bit)
   telemetry.gonderme_saati = 1722426600; // Unix timestamp for 31/07/2025-14:30:00
-  telemetry.basinc1 = 101325.00;
-  telemetry.basinc2 = 101300.00;
-  telemetry.sicaklik = 2540; // 25.40°C * 100
+  telemetry.basinc1 = bmp_basinc; // BMP280'den gelen basınç
+  telemetry.basinc2 = basinc_lora3; // Lora 3'ten gelen basınç
+  telemetry.sicaklik = (int16_t)(bmp_sicaklik * 100); // BMP280'den gelen sıcaklık * 100
   telemetry.pil_gerilimi = 377; // 3.77V * 100
   telemetry.gps1_latitude = 39.123456;
   telemetry.gps1_longitude = 32.654321;
   telemetry.gps1_altitude = 155.20;
-  telemetry.pitch = 152; // 15.2° * 10
-  telemetry.roll = 87; // 8.7° * 10
-  telemetry.yaw = 1805; // 180.5° * 10
+  telemetry.pitch = (int16_t)(pitch * 10); // MPU6050'den gelen pitch değeri * 10
+  telemetry.roll = (int16_t)(roll * 10); // MPU6050'den gelen roll değeri * 10
+  telemetry.yaw = (int16_t)(yaw * 10); // MPU6050'den gelen yaw değeri * 10
   telemetry.rhrh = current_rhrh; // Güncel RHRH değerini kullan
-  telemetry.iot_s1_data = 2250; // 22.50°C * 100
-  telemetry.iot_s2_data = 2310; // 23.10°C * 100
+  telemetry.iot_s1_data = sicaklik_lora4; // Lora 4'ten gelen sıcaklık
+  telemetry.iot_s2_data = sicaklik_lora5; // Lora 5'ten gelen sıcaklık
   telemetry.takim_no = TAKIM_NO;
   
-  // Basınç değerlerinden yükseklikleri hesapla
-  float yukseklik1 = calculateAltitude(101325.00);
-  float yukseklik2 = calculateAltitude(101300.00);
+  // Basınç değerlerinden yükseklikleri hesapla (referans değerlere göre)
+  float yukseklik1 = calculateAltitude(bmp_basinc, basinc1_referans);
+  float yukseklik2 = calculateAltitude(basinc_lora3, basinc2_referans);
   
   // İrtifa farkını hesapla (mutlak değer)
   float irtifa_farki = abs(yukseklik1 - yukseklik2);
@@ -203,7 +351,19 @@ void sendTelemetryToLora2() {
   Serial.print(" bytes), Paket#: ");
   Serial.print(paket_sayisi_lora2);
   Serial.print(", RHRH: ");
-  Serial.println(rhrh_str);
+  Serial.print(rhrh_str);
+  Serial.print(", BMP280 Basinc: ");
+  Serial.print(bmp_basinc);
+  Serial.print(" Pa, BMP280 Sicaklik: ");
+  Serial.print(bmp_sicaklik);
+  Serial.print("°C");
+  Serial.print(", MPU6050 P/R/Y: ");
+  Serial.print(pitch);
+  Serial.print("/");
+  Serial.print(roll);
+  Serial.print("/");
+  Serial.print(yaw);
+  Serial.println("°");
   Serial.print("Durum: ");
   Serial.println(rs.getResponseDescription());
   
@@ -268,6 +428,18 @@ bool waitForMessage(unsigned long timeout_ms) {
               Serial.print(prs->paket_sayisi);
               Serial.print(", Basinc: ");
               Serial.println(prs->basinc1);
+              
+              // Lora 3'ten gelen basınç değerini güncelle
+              basinc_lora3 = prs->basinc1;
+              
+              // Eğer henüz basınç kalibrasyonu yapılmamışsa ve ilk lora3 verisi gelmişse
+              // referans değeri güncelle
+              if (basinc_kalibrasyonu && basinc2_referans == basinc1_referans) {
+                basinc2_referans = prs->basinc1;
+                Serial.print("Basinc2 referans guncellendi: "); 
+                Serial.print(basinc2_referans); 
+                Serial.println(" Pa");
+              }
             }
             break;
             
@@ -279,6 +451,9 @@ bool waitForMessage(unsigned long timeout_ms) {
                 Serial.print(l4data->paket_sayisi);
                 Serial.print(", Sicaklik: ");
                 Serial.println(l4data->temperature / 100.0);
+                
+                // Lora 4'ten gelen sıcaklık değerini güncelle
+                sicaklik_lora4 = l4data->temperature;
               } else {
                 Serial.println("L4 Data - Checksum hatasi!");
               }
@@ -293,6 +468,9 @@ bool waitForMessage(unsigned long timeout_ms) {
                 Serial.print(l5data->paket_sayisi);
                 Serial.print(", Sicaklik: ");
                 Serial.println(l5data->temperature / 100.0);
+                
+                // Lora 5'ten gelen sıcaklık değerini güncelle
+                sicaklik_lora5 = l5data->temperature;
               } else {
                 Serial.println("L5 Data - Checksum hatasi!");
               }

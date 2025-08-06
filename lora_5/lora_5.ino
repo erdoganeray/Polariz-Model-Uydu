@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <LoRa_E22.h>
+#include <Wire.h>
+#include <Adafruit_BMP280.h>
 #include "../binary_protocol.h"
 
 #define LORA_M0 19
@@ -13,6 +15,10 @@
 #define LORA_ADDR_L 0x0A               
 
 LoRa_E22 E22(&Serial2, LORA_AUX, LORA_M0, LORA_M1);
+
+// BMP280 sensörü
+Adafruit_BMP280 bmp;
+bool bmp_status = false;
 
 uint16_t paket_sayisi = 1;
 unsigned long son_yayin = 0;
@@ -91,6 +97,35 @@ void printConfig() {
 void setup() {
   Serial.begin(115200);
   delay(500);
+  
+  // I2C başlat
+  Wire.begin();
+  
+  // BMP280 sensörünü başlat
+  Serial.println("BMP280 sensörü başlatılıyor...");
+  if (!bmp.begin(0x76)) { 
+    Serial.println("BMP280 sensörü bulunamadı! 0x77 adresi deneniyor...");
+    if (!bmp.begin(0x77)) {
+      Serial.println("BMP280 sensörü hiçbir adreste bulunamadı!");
+      bmp_status = false;
+    } else {
+      Serial.println("BMP280 sensörü 0x77 adresinde başlatıldı!");
+      bmp_status = true;
+    }
+  } else {
+    Serial.println("BMP280 sensörü 0x76 adresinde başlatıldı!");
+    bmp_status = true;
+  }
+  
+  if (bmp_status) {
+    // BMP280 ayarları
+    bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
+                    Adafruit_BMP280::SAMPLING_X2,
+                    Adafruit_BMP280::SAMPLING_X16,
+                    Adafruit_BMP280::FILTER_X16,
+                    Adafruit_BMP280::STANDBY_MS_500);
+  }
+  
   Serial2.begin(9600, SERIAL_8N1, LORA_RX, LORA_TX);
   E22.begin();
   configureLoRa();
@@ -106,7 +141,21 @@ void sendRegularData() {
   
   l5data.packet_type = PACKET_TYPE_L5_DATA;
   l5data.paket_sayisi = paket_sayisi;
-  l5data.temperature = 2830; // 28.30°C * 100
+  
+  // BMP280 sensöründen sıcaklık verisini oku
+  if (bmp_status) {
+    float temperature_c = bmp.readTemperature(); // Celsius cinsinden
+    l5data.temperature = (int16_t)(temperature_c * 100); // x100 ile integer'a çevir
+    
+    Serial.print("BMP280 Sicaklik: ");
+    Serial.print(temperature_c);
+    Serial.println(" °C");
+  } else {
+    // Sensör çalışmıyorsa varsayılan değer
+    l5data.temperature = 0; // 0°C * 100
+    Serial.println("BMP280 sensoru calismaz, varsayilan deger kullaniliyor");
+  }
+  
   l5data.checksum = calculateChecksum((uint8_t*)&l5data, sizeof(l5data));
   
   ResponseStatus rs = E22.sendFixedMessage(0x00, 0x0A, 10, (uint8_t*)&l5data, sizeof(l5data));
@@ -126,8 +175,8 @@ void sendRegularData() {
 void loop() {
   unsigned long su_an = millis();
   
-  // Her 4000ms (4 saniye) bir düzenli yayın yap (Lora4'ten farklı periyot)
-  if (su_an - son_yayin >= 4000) {
+  // Her 6000ms (0.6 saniye) bir düzenli yayın yap (Lora4'ten farklı periyot)
+  if (su_an - son_yayin >= 600) {
     sendRegularData();
     son_yayin = su_an;
   }

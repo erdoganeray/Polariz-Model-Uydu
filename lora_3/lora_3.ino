@@ -1,5 +1,7 @@
 #include <Arduino.h>
 #include <LoRa_E22.h>
+#include <Wire.h>
+#include <Adafruit_BMP280.h>
 #include "../binary_protocol.h"
 
 #define LORA_M0 19
@@ -13,6 +15,10 @@
 #define LORA_ADDR_L 0x0A               
 
 LoRa_E22 E22(&Serial2, LORA_AUX, LORA_M0, LORA_M1);
+
+// BMP280 sensörü
+Adafruit_BMP280 bmp;
+bool bmp_status = false;
 
 uint16_t paket_sayisi = 1;
 unsigned long son_yayin = 0;
@@ -29,7 +35,7 @@ void configureLoRa() {
   configuration.NETID = 0x00;       // Network ID
   
   // *** CHANNEL AYARI ***
-  configuration.CHAN = 30;          // Kanal 50
+  configuration.CHAN = 30;          // Kanal 30
   
   // *** AIR DATA RATE ***
   configuration.SPED.airDataRate = AIR_DATA_RATE_011_48;  // 4.8kbps
@@ -91,6 +97,35 @@ void printConfig() {
 void setup() {
   Serial.begin(115200);
   delay(500);
+  
+  // I2C başlat
+  Wire.begin();
+  
+  // BMP280 sensörünü başlat
+  Serial.println("BMP280 sensörü başlatılıyor...");
+  if (!bmp.begin(0x76)) { 
+    Serial.println("BMP280 sensörü bulunamadı! 0x77 adresi deneniyor...");
+    if (!bmp.begin(0x77)) {
+      Serial.println("BMP280 sensörü hiçbir adreste bulunamadı!");
+      bmp_status = false;
+    } else {
+      Serial.println("BMP280 sensörü 0x77 adresinde başlatıldı!");
+      bmp_status = true;
+    }
+  } else {
+    Serial.println("BMP280 sensörü 0x76 adresinde başlatıldı!");
+    bmp_status = true;
+  }
+  
+  if (bmp_status) {
+    // BMP280 ayarları
+    bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
+                    Adafruit_BMP280::SAMPLING_X2,
+                    Adafruit_BMP280::SAMPLING_X16,
+                    Adafruit_BMP280::FILTER_X16,
+                    Adafruit_BMP280::STANDBY_MS_500);
+  }
+  
   Serial2.begin(9600, SERIAL_8N1, LORA_RX, LORA_TX);
   E22.begin();
   configureLoRa();
@@ -106,7 +141,20 @@ void sendPressureContainerToLora1() {
   
   pressureContainer.packet_type = PACKET_TYPE_PRESSURE_CONTAINER;
   pressureContainer.paket_sayisi = paket_sayisi;
-  pressureContainer.basinc1 = 98765.40;
+  
+  // BMP280 sensöründen basınç verisini oku
+  if (bmp_status) {
+    float pressure_pa = bmp.readPressure(); // Pascal cinsinden
+    pressureContainer.basinc1 = pressure_pa;
+    
+    Serial.print("BMP280 Basinc: ");
+    Serial.print(pressure_pa);
+    Serial.println(" Pa");
+  } else {
+    // Sensör çalışmıyorsa varsayılan değer
+    pressureContainer.basinc1 = 0.00;
+    Serial.println("BMP280 sensoru calismaz, varsayilan deger kullaniliyor");
+  }
   
   ResponseStatus rs = E22.sendFixedMessage(0x00, 0x0A, 10, (uint8_t*)&pressureContainer, sizeof(pressureContainer));
   
