@@ -854,6 +854,49 @@ void readMPU6050() {
   if (yaw >= 360) yaw -= 360.0;
 }
 
+// Hata kodu hesaplama fonksiyonu
+uint8_t calculateHataKodu(int uydu_statusu, float inis_hizi, float tasiyici_basinc) {
+  uint8_t hata_kodu = 0;
+  
+  // 1. basamak (en soldaki): uydu_status == 2 ve inis_hizi 12-14 arası
+  bool basamak1_hatasiz = (uydu_statusu == 2 && inis_hizi >= 12.0 && inis_hizi <= 14.0);
+  if (!basamak1_hatasiz) {
+    hata_kodu |= (1 << 5); // 6. bitten başlayarak, 1. basamak = 6. bit
+  }
+  
+  // 2. basamak: uydu_status == 4 ve inis_hizi 6-8 arası
+  bool basamak2_hatasiz = (uydu_statusu == 4 && inis_hizi >= 6.0 && inis_hizi <= 8.0);
+  if (!basamak2_hatasiz) {
+    hata_kodu |= (1 << 4); // 2. basamak = 5. bit
+  }
+  
+  // 3. basamak: basinc2 değeri sıfıra eşitse hatalı
+  bool basamak3_hatalik = (basinc_lora3 == 0.0);
+  if (basamak3_hatalik) {
+    hata_kodu |= (1 << 3); // 3. basamak = 4. bit
+  }
+  
+  // Debug için 3. basamak durumunu yazdır
+  Serial.print("3. Basamak Debug - Basinc2 (basinc_lora3): ");
+  Serial.print(basinc_lora3);
+  Serial.print(", Basamak3 Hatalik: ");
+  Serial.println(basamak3_hatalik ? "EVET" : "HAYIR");
+  
+  // 4. basamak: şimdilik default olarak hatalı (1)
+  hata_kodu |= (1 << 2); // 4. basamak = 3. bit
+  
+  // 5. basamak: SEPERATION değeri kontrol
+  bool basamak5_hatasiz = (digitalRead(SEPERATION) == HIGH); // SEPERATION = 1 (HIGH) ise hatasız
+  if (!basamak5_hatasiz) {
+    hata_kodu |= (1 << 1); // 5. basamak = 2. bit
+  }
+  
+  // 6. basamak: şimdilik default olarak hatalı (1)
+  hata_kodu |= (1 << 0); // 6. basamak = 1. bit
+  
+  return hata_kodu;
+}
+
 // Buton durumlarını okuma ve yazdırma fonksiyonu
 void checkButtonStates() {
   static unsigned long lastButtonCheck = 0;
@@ -1140,21 +1183,30 @@ void sendTelemetryToLora2() {
   // İlk okuma ise referans basınç değerlerini kaydet
   if (!basinc_kalibrasyonu) {
     basinc1_referans = bmp_basinc;
-    if (basinc_lora3 > 0) { // Lora3'ten veri gelmişse onu da referans olarak kaydet
+    // Taşıyıcı basınç referansını sadece gerçek veri geldiğinde kaydet
+    if (basinc_lora3 > 0) {
       basinc2_referans = basinc_lora3;
+      Serial.println("Basinc referans degerleri kaydedildi (ilk okuma sifir yukseklik kabul edildi)");
+      Serial.print("Basinc1 referans: "); Serial.print(basinc1_referans); Serial.println(" Pa");
+      Serial.print("Basinc2 referans: "); Serial.print(basinc2_referans); Serial.println(" Pa");
+      basinc_kalibrasyonu = true;
     } else {
-      basinc2_referans = bmp_basinc; // Henüz veri gelmemişse aynı değeri kullan
+      // Henüz taşıyıcı verisi gelmemiş, sadece BMP280 referansını ayarla
+      basinc2_referans = 0; // Geçici olarak sıfır
+      Serial.println("BMP280 referans kaydedildi, tasiyici verisi bekleniyor...");
+      Serial.print("Basinc1 referans: "); Serial.print(basinc1_referans); Serial.println(" Pa");
     }
-    basinc_kalibrasyonu = true;
-    Serial.println("Basinc referans degerleri kaydedildi (ilk okuma sifir yukseklik kabul edildi)");
-    Serial.print("Basinc1 referans: "); Serial.print(basinc1_referans); Serial.println(" Pa");
-    Serial.print("Basinc2 referans: "); Serial.print(basinc2_referans); Serial.println(" Pa");
+  } else if (basinc2_referans == 0 && basinc_lora3 > 0) {
+    // Kalibrasyon sonrasında ilk taşıyıcı verisi geldi
+    basinc2_referans = basinc_lora3;
+    Serial.print("Basinc2 referans guncellendi (ilk tasiyici verisi): "); 
+    Serial.print(basinc2_referans); 
+    Serial.println(" Pa");
   }
 
   telemetry.packet_type = PACKET_TYPE_TELEMETRY;
   telemetry.paket_sayisi = paket_sayisi_lora2;
-  telemetry.uydu_statusu = 5;
-  telemetry.hata_kodu = 0b111111; // 010101 binary (6 bit)
+  telemetry.uydu_statusu = -1; // Default değer
   telemetry.gonderme_saati = getRTCUnixTime(); // RTC'den gerçek zaman
   telemetry.basinc1 = bmp_basinc; // BMP280'den gelen basınç
   telemetry.basinc2 = basinc_lora3; // Lora 3'ten gelen basınç
@@ -1184,7 +1236,15 @@ void sendTelemetryToLora2() {
   
   // Basınç değerlerinden yükseklikleri hesapla (referans değerlere göre)
   float yukseklik1 = calculateAltitude(bmp_basinc, basinc1_referans);
-  float yukseklik2 = calculateAltitude(basinc_lora3, basinc2_referans);
+  float yukseklik2 = 0.0; // Varsayılan değer
+  
+  // Taşıyıcı yükseklik hesaplama (sadece referans varsa)
+  if (basinc2_referans > 0 && basinc_lora3 > 0) {
+    yukseklik2 = calculateAltitude(basinc_lora3, basinc2_referans);
+  } else {
+    // Referans henüz yok, yükseklik hesaplanamaz
+    Serial.println("Tasiyici yukseklik hesaplanamaz - referans bekleniyor");
+  }
   
   // İrtifa farkını hesapla (mutlak değer)
   float irtifa_farki = abs(yukseklik1 - yukseklik2);
@@ -1198,6 +1258,9 @@ void sendTelemetryToLora2() {
   telemetry.irtifa_farki = irtifa_farki;
   telemetry.inis_hizi = inis_hizi;
   
+  // İniş hızı hesaplandıktan sonra hata kodu hesapla
+  telemetry.hata_kodu = calculateHataKodu(telemetry.uydu_statusu, inis_hizi, basinc_lora3);
+  
   // SD karta kaydet (mümkünse)
   if (sd_status) {
     saveToSD(telemetry, bmp_basinc, bmp_sicaklik);
@@ -1208,6 +1271,20 @@ void sendTelemetryToLora2() {
   // Gönderilen RHRH değerini göster
   char rhrh_str[5];
   decodeRHRH(current_rhrh, rhrh_str);
+  
+  // Hata kodu bilgisini yazdır
+  Serial.print("Hata Kodu: 0b");
+  Serial.print(telemetry.hata_kodu, BIN);
+  Serial.print(" (0x");
+  Serial.print(telemetry.hata_kodu, HEX);
+  Serial.print(") - Uydu Status: ");
+  Serial.print(telemetry.uydu_statusu);
+  Serial.print(", Inis Hizi: ");
+  Serial.print(inis_hizi);
+  Serial.print(", Tasiyici Basinc: ");
+  Serial.print(basinc_lora3);
+  Serial.print(", SEPERATION: ");
+  Serial.println(digitalRead(SEPERATION) == HIGH ? "HIGH" : "LOW");
   
   Serial.print("Lora2'ye binary telemetry gonderildi (");
   Serial.print(sizeof(telemetry));
@@ -1297,15 +1374,6 @@ bool waitForMessage(unsigned long timeout_ms) {
               
               // Lora 3'ten gelen basınç değerini güncelle
               basinc_lora3 = prs->basinc1;
-              
-              // Eğer henüz basınç kalibrasyonu yapılmamışsa ve ilk lora3 verisi gelmişse
-              // referans değeri güncelle
-              if (basinc_kalibrasyonu && basinc2_referans == basinc1_referans) {
-                basinc2_referans = prs->basinc1;
-                Serial.print("Basinc2 referans guncellendi: "); 
-                Serial.print(basinc2_referans); 
-                Serial.println(" Pa");
-              }
             }
             break;
             
