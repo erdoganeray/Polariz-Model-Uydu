@@ -5,6 +5,9 @@
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include <RTClib.h>
+#include <SD.h>
+#include <FS.h>
+#include <SPI.h>
 #include "../binary_protocol.h"
 
 #define LORA_M0 13
@@ -16,6 +19,12 @@
 #define LORA_CHANNEL 10
 #define LORA_ADDR_H 0x00
 #define LORA_ADDR_L 0x0A             
+
+// SD Kart SPI pin tanımlamaları
+#define SD_SCK 18
+#define SD_MISO 19
+#define SD_MOSI 23
+#define SD_CS 5             
 
 LoRa_E22 E22(&Serial2, LORA_AUX, LORA_M0, LORA_M1);
 
@@ -60,6 +69,9 @@ float pitch_offset = 0.0;
 float roll_offset = 0.0;
 float yaw_offset = 0.0;
 bool mpu_calibrated = false;
+
+// SD kart durumu
+bool sd_status = false;
 
 // Basınç değerinden yükseklik hesaplama fonksiyonu
 float calculateAltitude(float pressure, float reference_pressure) {
@@ -169,6 +181,198 @@ void processSerialCommand() {
       } else {
         Serial.println("Hata: Gecersiz format! Kullanim: SET DD,MM,YY,HH,MM,SS");
         Serial.println("Ornek: SET 06,08,25,17,25,00");
+      }
+    }
+    // SD durum komutunu kontrol et
+    else if (command == "SD_STATUS") {
+      Serial.print("SD Kart Durumu: ");
+      Serial.println(sd_status ? "AKTIF" : "HATA");
+      if (sd_status) {
+        Serial.print("Dosya: /lora1_data.csv - ");
+        if (SD.exists("/lora1_data.csv")) {
+          File file = SD.open("/lora1_data.csv", FILE_READ);
+          if (file) {
+            Serial.print("Boyut: ");
+            Serial.print(file.size());
+            Serial.println(" bytes");
+            file.close();
+          }
+        } else {
+          Serial.println("Dosya bulunamadı");
+        }
+      }
+    }
+    // SD test komutunu kontrol et
+    else if (command == "SD_TEST") {
+      if (sd_status) {
+        String testData = "Test verisi: " + String(millis()) + "\n";
+        if (appendFile(SD, "/lora1_test.txt", testData.c_str())) {
+          Serial.println("SD test yazma başarılı");
+        } else {
+          Serial.println("SD test yazma hatası");
+        }
+      } else {
+        Serial.println("SD kart aktif değil");
+      }
+    }
+  }
+}
+
+void checkSDStatus() {
+  // SD kartın durumunu periyodik olarak kontrol et
+  static unsigned long lastSDCheck = 0;
+  if (millis() - lastSDCheck > 10000) { // Her 10 saniyede bir kontrol et
+    lastSDCheck = millis();
+    
+    if (sd_status) {
+      // SD kart aktifse, dosya erişimi test et
+      if (!SD.exists("/lora1_data.csv")) {
+        Serial.println("SD kart dosyası bulunamadı - yeniden bağlanmaya çalışılıyor...");
+        sd_status = false;
+      }
+    }
+    
+    if (!sd_status) {
+      // SD kart aktif değilse yeniden başlatmaya çalış
+      Serial.print("SD kart yeniden bağlanmaya çalışılıyor... ");
+      if (SD.begin(SD_CS)) {
+        sd_status = true;
+        Serial.println("Başarılı!");
+        
+        // CSV dosyası yoksa oluştur
+        if (!SD.exists("/lora1_data.csv")) {
+          writeFile(SD, "/lora1_data.csv", "paket_sayisi,uydu_statusu,hata_kodu,gonderme_saati,basinc1,basinc2,yukseklik1,yukseklik2,irtifa_farki,inis_hizi,sicaklik,pil_gerilimi,gps1_latitude,gps1_longitud,gps1_altitude,pitch,roll,yaw,rhrh,iot_s1_data,iot_s2_data,takim_no\n");
+        }
+      } else {
+        Serial.println("Başarısız");
+      }
+    }
+  }
+}
+
+// SD Kart fonksiyonları
+void initSDCard() {
+  Serial.print("SD Kart... ");
+  
+  if (!SD.begin(SD_CS)) {
+    Serial.println("HATA!");
+    sd_status = false;
+    return;
+  }
+  
+  uint8_t cardType = SD.cardType();
+  if (cardType == CARD_NONE) {
+    Serial.println("Kart bulunamadı!");
+    sd_status = false;
+    return;
+  }
+  
+  sd_status = true;
+  Serial.println("OK");
+  
+  if (!SD.exists("/lora1_data.csv")) {
+    writeFile(SD, "/lora1_data.csv", "paket_sayisi,uydu_statusu,hata_kodu,gonderme_saati,basinc1,basinc2,yukseklik1,yukseklik2,irtifa_farki,inis_hizi,sicaklik,pil_gerilimi,gps1_latitude,gps1_longitud,gps1_altitude,pitch,roll,yaw,rhrh,iot_s1_data,iot_s2_data,takim_no\n");
+  }
+}
+
+void writeFile(fs::FS &fs, const char *path, const char *message) {
+  File file = fs.open(path, FILE_WRITE);
+  if (file) {
+    file.print(message);
+    file.close();
+  }
+}
+
+bool appendFile(fs::FS &fs, const char *path, const char *message) {
+  File file = fs.open(path, FILE_APPEND);
+  if (!file) return false;
+  
+  size_t bytesWritten = file.print(message);
+  file.close();
+  return bytesWritten > 0;
+}
+
+void saveToSD(TelemetryPacket data, float bmp_pressure, float bmp_temperature) {
+  if (!sd_status) return;
+  
+  // RHRH değerini string'e çevir
+  char rhrh_str[5];
+  decodeRHRH(data.rhrh, rhrh_str);
+  
+  // Timestamp'i okunabilir formata çevir
+  DateTime now = rtc.now();
+  char timestamp_str[20];
+  sprintf(timestamp_str, "%02d.%02d.%04d:%02d.%02d.%02d", 
+          now.day(), now.month(), now.year(), 
+          now.hour(), now.minute(), now.second());
+  
+  // CSV satırını belirtilen sırayla oluştur
+  String csvLine = String(data.paket_sayisi) + "," +                    // paket_sayisi
+                   String(data.uydu_statusu) + "," +                    // uydu_statusu
+                   String(data.hata_kodu) + "," +                       // hata_kodu
+                   String(timestamp_str) + "," +                        // gonderme_saati (formatted)
+                   String(data.basinc1, 1) + "," +                      // basinc1
+                   String(data.basinc2, 1) + "," +                      // basinc2
+                   String(data.yukseklik1, 1) + "," +                   // yukseklik1
+                   String(data.yukseklik2, 1) + "," +                   // yukseklik2
+                   String(data.irtifa_farki, 1) + "," +                 // irtifa_farki
+                   String(data.inis_hizi, 1) + "," +                    // inis_hizi
+                   String(data.sicaklik / 100.0, 1) + "," +             // sicaklik
+                   String(data.pil_gerilimi / 100.0, 3) + "," +         // pil_gerilimi
+                   String(data.gps1_latitude, 6) + "," +                // gps1_latitude
+                   String(data.gps1_longitude, 6) + "," +               // gps1_longitud
+                   String(data.gps1_altitude, 1) + "," +                // gps1_altitude
+                   String(data.pitch / 10.0, 1) + "," +                 // pitch
+                   String(data.roll / 10.0, 1) + "," +                  // roll
+                   String(data.yaw / 10.0, 1) + "," +                   // yaw
+                   String(rhrh_str) + "," +                             // rhrh
+                   String(data.iot_s1_data / 100.0, 1) + "," +          // iot_s1_data
+                   String(data.iot_s2_data / 100.0, 1) + "," +          // iot_s2_data
+                   String(data.takim_no) + "\n";                        // takim_no
+  
+  if (!appendFile(SD, "/lora1_data.csv", csvLine.c_str())) {
+    sd_status = false;
+  }
+}
+
+void loadLastPacketNumber() {
+  if (!sd_status || !SD.exists("/lora1_data.csv")) {
+    return;
+  }
+  
+  File file = SD.open("/lora1_data.csv", FILE_READ);
+  if (!file) return;
+  
+  String lastLine = "";
+  String currentLine = "";
+  
+  // Dosyayı satır satır okuyarak en son satırı bul
+  while (file.available()) {
+    char c = file.read();
+    if (c == '\n') {
+      if (currentLine.length() > 0 && !currentLine.startsWith("paket_sayisi")) {
+        lastLine = currentLine;
+      }
+      currentLine = "";
+    } else if (c != '\r') {
+      currentLine += c;
+    }
+  }
+  
+  // Son satır newline ile bitmiyorsa
+  if (currentLine.length() > 0 && !currentLine.startsWith("paket_sayisi")) {
+    lastLine = currentLine;
+  }
+  
+  file.close();
+  
+  if (lastLine.length() > 0) {
+    int commaIndex = lastLine.indexOf(',');
+    if (commaIndex > 0) {
+      uint16_t lastPacketNumber = lastLine.substring(0, commaIndex).toInt();
+      if (lastPacketNumber > 0) {
+        paket_sayisi_lora2 = lastPacketNumber + 1;
+        Serial.printf("SD karttan son paket numarası yüklendi: %d (yeni: %d)\n", lastPacketNumber, paket_sayisi_lora2);
       }
     }
   }
@@ -361,6 +565,14 @@ void setup() {
   readMPU6050();
   Serial.println("MPU6050 referans kalibrasyonu tamamlandi");
   
+  // SD kartı başlat
+  initSDCard();
+  
+  // SD karttan son paket numarasını yükle
+  if (sd_status) {
+    loadLastPacketNumber();
+  }
+  
   E22.begin();
   configureLoRa();
   Serial.println("LORA 1 - Ana Kontrol Merkezi baslatildi");
@@ -371,6 +583,14 @@ void setup() {
   Serial.print("Baslangic RHRH degeri: ");
   Serial.println(rhrh_str);
   Serial.println("RHRH degeri lora_2'den gelen Button Control paketleri ile guncellenecek.");
+  Serial.println();
+  
+  // Kullanılabilir komutları göster
+  Serial.println("=== KULLANILABILIR KOMUTLAR ===");
+  Serial.println("SET DD,MM,YY,HH,MM,SS - RTC tarih/saat ayarla");
+  Serial.println("SD_STATUS - SD kart durumu goruntule");
+  Serial.println("SD_TEST - SD kart test dosyası yaz");
+  Serial.println("===============================");
   Serial.println();
   
   printModuleInfo();
@@ -439,6 +659,11 @@ void sendTelemetryToLora2() {
   telemetry.irtifa_farki = irtifa_farki;
   telemetry.inis_hizi = inis_hizi;
   
+  // SD karta kaydet (mümkünse)
+  if (sd_status) {
+    saveToSD(telemetry, bmp_basinc, bmp_sicaklik);
+  }
+  
   ResponseStatus rs = E22.sendFixedMessage(0x00, 0x0A, 20, (uint8_t*)&telemetry, sizeof(telemetry));
   
   // Gönderilen RHRH değerini göster
@@ -462,7 +687,9 @@ void sendTelemetryToLora2() {
   Serial.print(roll);
   Serial.print("/");
   Serial.print(yaw);
-  Serial.println("°");
+  Serial.print("°, SD: ");
+  Serial.print(sd_status ? "OK" : "HATA");
+  Serial.println();
   Serial.print("Durum: ");
   Serial.println(rs.getResponseDescription());
   
@@ -595,6 +822,9 @@ void loop() {
   
   // Serial komutları kontrol et
   processSerialCommand();
+  
+  // SD kart durumunu kontrol et
+  checkSDStatus();
   
   // Zamanlayıcı başlat
   unsigned long loop_start_time = millis();
