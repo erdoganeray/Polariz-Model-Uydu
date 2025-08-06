@@ -40,8 +40,8 @@ RTC_DS3231 rtc;
 uint16_t paket_sayisi_lora2 = 1;
 uint16_t paket_sayisi_lora3 = 1;
 
-// RHRH değeri - başlangıçta 0000, lora_2'den gelen değerle güncellenecek
-uint32_t current_rhrh = encodeRHRH('0', '0', '0', '0');
+// RHRH değeri - başlangıçta 0A0A, lora_2'den gelen değerle güncellenecek
+uint32_t current_rhrh = encodeRHRH('0', 'A', '0', 'A');
 
 // Lora 3'ten gelen basınç değeri
 float basinc_lora3 = 0.00; // Varsayılan değer
